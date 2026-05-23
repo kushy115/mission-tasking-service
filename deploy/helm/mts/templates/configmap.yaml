@@ -1,0 +1,9 @@
+# Non-secret runtime config. Same image runs unchanged in every env — only ConfigMap+Secret differ.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mts-config
+data:
+  {{- range $k, $v := .Values.config }}
+  {{ $k }}: "{{ $v }}"
+  {{- end }}

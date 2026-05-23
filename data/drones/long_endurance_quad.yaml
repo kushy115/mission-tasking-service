@@ -1,0 +1,21 @@
+profile_id: long-endurance-quad
+description: |
+  Larger quadcopter, ~45 minutes endurance. EO + IR payload.
+  Used as the default profile for the simple yard area.
+rated_endurance_s: 2700.0
+cruise_speed_mps: 18.0
+climb_rate_mps: 4.0
+battery_wh: 540.0
+cruise_power_w: 380.0
+hover_power_w: 520.0
+sensors:
+  - name: nadir_eo
+    mode: EO
+    power_w: 12.0
+    half_angle_deg: 32.0
+    ground_resolution_at_100m: 0.035
+  - name: nadir_ir
+    mode: IR
+    power_w: 18.0
+    half_angle_deg: 22.0
+    ground_resolution_at_100m: 0.18

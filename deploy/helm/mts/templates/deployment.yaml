@@ -1,0 +1,36 @@
+# Stateless app: replicas scale horizontally because all durable state lives in Postgres/Redis.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mts
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels: { app: mts }
+  template:
+    metadata:
+      labels: { app: mts }
+    spec:
+      containers:
+        - name: mts
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef: { name: mts-config }
+            - secretRef: { name: mts-secrets }
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          # Liveness: pod is up if the HTTP server answers; readiness gates traffic
+          # until dependencies (Postgres, Redis) respond on /readyz.
+          startupProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            failureThreshold: 30
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8000 }
+            periodSeconds: 5

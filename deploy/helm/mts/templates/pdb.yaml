@@ -1,0 +1,11 @@
+# Keep a quorum of pods serving during voluntary disruptions (node drains, rolling updates).
+{{- if .Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mts
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels: { app: mts }
+{{- end }}

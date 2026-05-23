@@ -1,0 +1,25 @@
+# Nightly continuous-evaluation job: runs the LangSmith eval suite against the
+# deployed service. Catches LLM regressions that unit tests cannot.
+{{- if .Values.evalCron.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mts-evals
+spec:
+  schedule: "{{ .Values.evalCron.schedule }}"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: evals
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              command: ["python", "evals/run_evals.py"]
+              envFrom:
+                - configMapRef: { name: mts-config }
+                - secretRef: { name: mts-secrets }
+              env:
+                - name: MTS_BASE_URL
+                  value: "http://mts.default.svc.cluster.local"
+{{- end }}

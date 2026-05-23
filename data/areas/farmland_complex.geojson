@@ -1,0 +1,62 @@
+{
+  "type": "FeatureCollection",
+  "name": "farmland_complex",
+  "properties": {
+    "area_id": "farmland-complex",
+    "description": "Farmland operating area with two NFZs (silo, barn) and a tighter ceiling.",
+    "ceiling_m": 90.0
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "role": "boundary",
+        "home": [-95.5000, 41.2500]
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-95.5100, 41.2400],
+          [-95.4900, 41.2400],
+          [-95.4900, 41.2600],
+          [-95.5100, 41.2600],
+          [-95.5100, 41.2400]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "role": "nfz",
+        "name": "grain_silo"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-95.5020, 41.2480],
+          [-95.5000, 41.2480],
+          [-95.5000, 41.2500],
+          [-95.5020, 41.2500],
+          [-95.5020, 41.2480]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "role": "nfz",
+        "name": "north_barn"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-95.4970, 41.2560],
+          [-95.4950, 41.2560],
+          [-95.4950, 41.2580],
+          [-95.4970, 41.2580],
+          [-95.4970, 41.2560]
+        ]]
+      }
+    }
+  ]
+}

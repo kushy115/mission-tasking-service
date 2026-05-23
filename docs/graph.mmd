@@ -1,0 +1,16 @@
+%% LangGraph compile flow for MTS.
+%% Regenerate with: python -c "from app.graph.builder import mermaid_diagram; print(mermaid_diagram())"
+flowchart TD
+    START([__start__]) --> intake
+    intake -->|clean command| plan
+    intake -->|ambiguous| clarify
+    intake -->|unknown area / no clearance| reject
+    plan --> validate
+    validate -->|no violations| finalize
+    validate -->|violations & repair_attempts < 3| repair
+    validate -->|violations & repair_attempts >= 3| reject
+    validate -->|planner asked to clarify| clarify
+    repair --> plan
+    clarify --> finalize
+    reject --> finalize
+    finalize --> END([__end__])

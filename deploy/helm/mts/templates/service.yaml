@@ -1,0 +1,12 @@
+# ClusterIP service: HPA + ingress fan out to pods; intra-cluster callers hit this directly.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mts
+spec:
+  type: {{ .Values.service.type }}
+  selector: { app: mts }
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}

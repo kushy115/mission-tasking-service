@@ -1,0 +1,24 @@
+# HPA scales on a custom inflight-requests metric (via Prometheus Adapter) instead
+# of CPU. LLM compile calls are slow + I/O-bound — CPU underreports load. Inflight
+# requests per pod is the honest signal of queueing pressure.
+{{- if .Values.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mts
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mts
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: mts_inflight_requests
+        target:
+          type: AverageValue
+          averageValue: "{{ .Values.autoscaling.targetInflightPerPod }}"
+{{- end }}

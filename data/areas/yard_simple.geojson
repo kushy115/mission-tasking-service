@@ -1,0 +1,28 @@
+{
+  "type": "FeatureCollection",
+  "name": "yard_simple",
+  "properties": {
+    "area_id": "yard-simple",
+    "description": "Simple industrial yard near Newark, NJ — single rectangle, no NFZs.",
+    "ceiling_m": 120.0
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "role": "boundary",
+        "home": [-74.1700, 40.7200]
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-74.1750, 40.7180],
+          [-74.1650, 40.7180],
+          [-74.1650, 40.7240],
+          [-74.1750, 40.7240],
+          [-74.1750, 40.7180]
+        ]]
+      }
+    }
+  ]
+}

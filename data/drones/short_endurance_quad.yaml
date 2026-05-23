@@ -1,0 +1,21 @@
+profile_id: short-endurance-quad
+description: |
+  Small quadcopter, ~15 minutes endurance. EO + IR payload.
+  Used to exercise battery-constrained planning cases in evals.
+rated_endurance_s: 900.0
+cruise_speed_mps: 12.0
+climb_rate_mps: 3.0
+battery_wh: 180.0
+cruise_power_w: 350.0
+hover_power_w: 450.0
+sensors:
+  - name: nadir_eo
+    mode: EO
+    power_w: 12.0
+    half_angle_deg: 30.0
+    ground_resolution_at_100m: 0.04
+  - name: nadir_ir
+    mode: IR
+    power_w: 18.0
+    half_angle_deg: 20.0
+    ground_resolution_at_100m: 0.20
