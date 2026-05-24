@@ -34,7 +34,8 @@ log = logging.getLogger(__name__)
 _AMBIGUOUS_MARKERS = ("?", "something", "stuff", "whatever", "somewhere", "around")
 
 
-def intake_node(state: CompileState) -> dict[str, Any]:
+def intake_node(state: CompileState) -> dict[str, Any]:  # noqa: D401
+    log.info("→ intake (area=%s)", state.get("area_id"))
     """Normalize the request and load the geo context for the requested area.
 
     If the command is hopelessly underspecified, short-circuit to clarify.
@@ -192,6 +193,7 @@ def plan_node(state: CompileState) -> dict[str, Any]:
     """LLM tool-calling node. Produces a draft MissionPlan. On repair passes,
     the previous validation errors are injected so the agent can correct course.
     """
+    log.info("→ plan (repair_attempts=%s)", state.get("repair_attempts", 0))
     agent = _agent_lazy()
     repair_attempts = state.get("repair_attempts", 0)
     errors = state.get("validation_errors") or []
@@ -210,7 +212,17 @@ def plan_node(state: CompileState) -> dict[str, Any]:
             + "\n  - ".join(errors)
         )
 
-    result = agent.invoke({"messages": [{"role": "user", "content": "\n".join(user_msg_parts)}]})
+    try:
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": "\n".join(user_msg_parts)}]}
+        )
+    except Exception as e:  # noqa: BLE001
+        log.exception("agent.invoke raised: %s", e)
+        return {
+            "draft_plan": None,
+            "validation_errors": [f"agent error: {type(e).__name__}: {e}"],
+        }
+    log.info("← plan returned keys=%s", list(result.keys()) if isinstance(result, dict) else type(result).__name__)
     structured: MissionPlan = result.get("structured_response") or result.get("response")
     if structured is None:
         # Defensive: if the agent failed to produce structured output, treat as
@@ -230,6 +242,7 @@ def plan_node(state: CompileState) -> dict[str, Any]:
 
 def validate_node(state: CompileState) -> dict[str, Any]:
     """Deterministic kernel pass. No LLM. Source of truth on safety."""
+    log.info("→ validate")
     raw = state.get("draft_plan")
     if raw is None:
         return {"validation_errors": state.get("validation_errors") or ["no draft_plan to validate"]}
@@ -265,6 +278,7 @@ def validate_node(state: CompileState) -> dict[str, Any]:
 
 def repair_node(state: CompileState) -> dict[str, Any]:
     """Increment the repair counter; the conditional edge sends us back to plan."""
+    log.info("→ repair (n=%s)", state.get("repair_attempts", 0) + 1)
     return {"repair_attempts": state.get("repair_attempts", 0) + 1}
 
 
@@ -300,7 +314,8 @@ def reject_node(state: CompileState) -> dict[str, Any]:
 # ---- finalize ---------------------------------------------------------------
 
 
-def finalize_node(state: CompileState) -> dict[str, Any]:
+def finalize_node(state: CompileState) -> dict[str, Any]:  # noqa: D401
+    log.info("→ finalize (status=%s)", state.get("status"))
     """Assemble the final MissionPlan, persist it, and mark ready for approval.
 
     The interrupt happens at the edge from finalize → END (configured in the

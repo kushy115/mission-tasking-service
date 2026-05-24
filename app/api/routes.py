@@ -54,7 +54,9 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
     """Compile a natural-language command into a validated MissionPlan."""
     graph = request.app.state.compile_graph
     thread_id = req.request_id or str(uuid.uuid4())
-    config = {"configurable": {"thread_id": thread_id}}
+    # Cap graph steps so a runaway agent loop fails fast with a clear error
+    # instead of hanging until the container is killed.
+    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 20}
 
     initial_state = {
         "raw_command": req.command,
@@ -66,9 +68,16 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
         "repair_attempts": 0,
     }
 
-    with COMPILE_DURATION.time():
-        final_state = graph.invoke(initial_state, config=config)
+    log.info("compile request thread_id=%s area=%s command=%r", thread_id, req.area_id, req.command[:120])
+    try:
+        with COMPILE_DURATION.time():
+            final_state = graph.invoke(initial_state, config=config)
+    except Exception as e:  # noqa: BLE001
+        COMPILE_REQUESTS.labels(status="error").inc()
+        log.exception("compile graph raised: %s", e)
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
 
+    log.info("compile graph done thread_id=%s status=%s", thread_id, final_state.get("status"))
     raw_plan = final_state.get("draft_plan")
     if raw_plan is None:
         REJECTIONS_TOTAL.inc()
