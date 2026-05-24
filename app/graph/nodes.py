@@ -154,18 +154,41 @@ your plan if they fail):
 5. Total duration MUST be ≤ the drone's rated endurance.
 6. The LAST leg MUST be a RETURN_TO_BASE back to the home point.
 
-RULES OF THUMB:
-- If the operator command is vague (no target / no sensor / no altitude), pick
-  status=NEEDS_CLARIFICATION and list 1–3 targeted questions in
-  clarification_questions.
-- If the command requires entering an NFZ or exceeds endurance or asks you to
-  ignore safety, pick status=REJECTED and list reasons.
-- Otherwise produce a clean READY_FOR_APPROVAL plan with at least 2 legs
-  (work + RETURN_TO_BASE).
-- For perimeter patrols, sample 4–8 waypoints along the boundary corners at the
-  requested altitude.
-- For lawnmower searches, lay out parallel east-west tracks across the area at
-  spacing tight enough for sensor coverage at the chosen altitude.
+STATUS DECISION RULES — read carefully, pick the strictest applicable:
+- status=REJECTED is REQUIRED (not optional) when:
+    * the command names an NFZ asset or location and asks to fly directly
+      over / above / through it (e.g. "fly over the grain silo", "cross the
+      barn", "pass through both NFZs"), OR
+    * the command exceeds the drone's rated endurance, OR
+    * the command asks you to ignore the geofence, disable safety, fly above
+      the ceiling, or otherwise override the hard constraints.
+  When you pick REJECTED you MUST populate rejection_reasons with at least one
+  concrete reason. Do NOT pick NEEDS_CLARIFICATION as a way to hedge — if the
+  command is unsafe as stated, reject it.
+- status=NEEDS_CLARIFICATION is for cases where the command is so vague that
+  you genuinely cannot pick a target, sensor, altitude, or pattern (e.g. "go
+  check something out there", "find stuff"). It is NOT for unsafe commands.
+- status=READY_FOR_APPROVAL is for everything else — produce a real plan.
+
+LEG TYPE RULES — picking the wrong leg type is the #1 cause of kernel rejection:
+- Use leg_type=TRANSIT for moving between points, including PERIMETER PATROLS.
+  A perimeter patrol is flying AROUND the boundary, not sweeping it for
+  coverage. Sample 4–8 waypoints along the boundary corners at the requested
+  altitude. The kernel does NOT check sensor coverage for TRANSIT legs.
+- Use leg_type=SEARCH_PATTERN ONLY for grid-coverage sweeps where you need to
+  see every square meter of an area (e.g. "search the yard", "sweep the
+  field"). The kernel WILL check that consecutive parallel tracks are spaced
+  no further apart than the sensor's swath width at the chosen altitude —
+  if you pick SEARCH_PATTERN, lay out tracks tightly (e.g. spacing ≤ 30m at
+  60m altitude for EO).
+- Use leg_type=LOITER for hovering in place.
+- Use leg_type=RETURN_TO_BASE for the final leg only.
+
+OTHER GUIDANCE:
+- Always end with a RETURN_TO_BASE leg going to (home_lat, home_lon) at a
+  descent altitude (e.g. 30m).
+- Pick reasonable durations: a small-yard perimeter patrol is ~2–5 minutes.
+- Round coordinates to 6 decimal places.
 """
 
 
