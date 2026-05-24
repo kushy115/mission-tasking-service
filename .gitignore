@@ -20,6 +20,9 @@ uv.lock
 htmlcov/
 .coverage
 
+# Jupyter
+.ipynb_checkpoints/
+
 # IDE
 .idea/
 .vscode/
