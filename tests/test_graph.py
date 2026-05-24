@@ -102,9 +102,10 @@ def test_happy_path(geo_ctx, profile):
         _patch_engine(geo_ctx, profile)[1],
         _patch_engine(geo_ctx, profile)[2],
         _patch_engine(geo_ctx, profile)[3],
-        patch("app.graph.nodes._agent_lazy") as mock_agent,
+        patch("app.graph.nodes._llm_lazy") as mock_agent,
     ):
-        mock_agent.return_value.invoke.return_value = {"structured_response": plan}
+        ai = type("AIMsg", (), {"content": plan.model_dump_json()})()
+        mock_agent.return_value.invoke.return_value = ai
         g = build_graph()
         out = g.invoke(
             {
@@ -167,9 +168,10 @@ def test_repair_then_reject(geo_ctx, profile):
         _patch_engine(geo_ctx, profile)[1],
         _patch_engine(geo_ctx, profile)[2],
         _patch_engine(geo_ctx, profile)[3],
-        patch("app.graph.nodes._agent_lazy") as mock_agent,
+        patch("app.graph.nodes._llm_lazy") as mock_agent,
     ):
-        mock_agent.return_value.invoke.return_value = {"structured_response": bad}
+        ai = type("AIMsg", (), {"content": bad.model_dump_json()})()
+        mock_agent.return_value.invoke.return_value = ai
         g = build_graph()
         out = g.invoke(
             {

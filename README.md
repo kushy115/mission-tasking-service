@@ -31,8 +31,20 @@ operator command + area + drone state
 
 Key design choices:
 
-- **The LLM never emits a plan as free text.** It is constrained to
-`MissionPlan` via `response_format` and runs inside `create_agent`.
+- **`plan` node = ONE direct LLM call, NOT a tool-calling agent.** Originally
+the planner was a `create_agent` + tools + `response_format=MissionPlan` setup,
+which made 5+ LLM calls per compile (one per tool decision plus a final
+structured-output pass). That was slow, expensive (free-tier Gemini ran out of
+its 20 RPD quota in 2–3 compiles), and the `response_format=Pydantic` + Gemini
+combo was fragile — silent uvicorn worker death on response handling. We
+replaced it with a single `llm.invoke()` per attempt, inlining the geo context
+into the prompt and parsing JSON ourselves. ~1 LLM call per repair pass instead
+of 5+. The deterministic kernel is still the safety source of truth. See the
+big comment block above `plan_node` in `app/graph/nodes.py`.
+- **The LLM never emits a plan as free text in practice.** The prompt requires
+a strict JSON envelope; we `json.loads()` it and validate it against the
+`MissionPlan` Pydantic schema. If parsing or validation fails, the repair loop
+re-prompts.
 - **The validator is deterministic Python, not the LLM.** `app/validation/kernel.py`
 is the source of truth on safety; `app/validation/physics.py` is the
 energy/time model. Both have no LLM and no network. Tests are mandatory.

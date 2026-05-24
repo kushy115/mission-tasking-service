@@ -13,8 +13,8 @@ import logging
 import uuid
 from typing import Any
 
-from langchain.agents import create_agent
-from langchain.agents.middleware import ModelFallbackMiddleware
+import json
+
 from langchain.chat_models import init_chat_model
 
 from app.config import get_settings
@@ -86,77 +86,116 @@ def intake_node(state: CompileState) -> dict[str, Any]:  # noqa: D401
 
 
 # ---- plan -------------------------------------------------------------------
+#
+# IMPORTANT ARCHITECTURE NOTE — read before changing this file.
+#
+# The `plan` node uses a DIRECT LLM call (one llm.invoke per attempt), NOT a
+# LangChain `create_agent` tool-calling agent. This is a deliberate change from
+# the original CLAUDE.md design. Why we moved away from the agent:
+#
+#   - The agent loop (create_agent + tools + response_format=MissionPlan)
+#     made 5+ LLM calls per compile request: one per tool decision, plus a
+#     final structured-output call. That is slow, expensive, and on free-tier
+#     Gemini blew through the 20 RPD quota in 2–3 compiles.
+#   - The `response_format=Pydantic` + Gemini tool-calling combo was fragile:
+#     when the model finally produced a final response after transient 503s,
+#     the structured-output parser would silently kill the uvicorn worker
+#     (no traceback, exit code 0). Hard to debug, harder to fix upstream.
+#   - We don't actually NEED dynamic tool calling here. The geo context, the
+#     drone profile, and the area boundary are all known at plan-time — we
+#     can inline them into the prompt. The deterministic kernel (validate_node)
+#     is the source of truth on safety anyway; the LLM does NOT need to "check"
+#     anything mid-loop.
+#
+# So: one prompt in, one JSON object out, manual json.loads + Pydantic
+# validation that we control. If the plan fails the safety kernel, the repair
+# loop re-prompts with the violation list. ~1 LLM call per repair pass instead
+# of 5+. Faster, cheaper, more reliable across providers, easier to reason
+# about. The cost is that the LLM cannot dynamically call a tool like
+# lookup_search_pattern — but we can deterministically generate that geometry
+# in the node itself if needed in the future.
 
-_SYSTEM_PROMPT = """You are the planning agent for the Mission Tasking Service.
+_SYSTEM_PROMPT = """You are the planner for the Mission Tasking Service.
 
-You receive a natural-language operator command, the operating-area geofence,
-the drone's capability profile, and (on repair passes) the list of validation
-violations from the previous attempt.
+Given a natural-language operator command + the operating area's geofence + the
+drone profile, produce ONE mission plan as a single JSON object matching the
+schema below. No prose, no markdown — JSON only, starting with `{` and ending
+with `}`.
 
-Your job is to produce a structured MissionPlan that:
-  1. stays inside the geofence,
-  2. avoids every no-fly-zone,
-  3. respects the altitude ceiling and the 20m minimum AGL floor,
-  4. fits within the drone's rated endurance with at least 20% battery reserve at landing,
-  5. uses sensor coverage adequately for any SEARCH_PATTERN leg,
-  6. ENDS with a RETURN_TO_BASE leg back to the home point.
+REQUIRED schema:
+{
+  "mission_id": "<short slug>",
+  "area_id": "<echo back the input area_id>",
+  "status": "READY_FOR_APPROVAL" | "NEEDS_CLARIFICATION" | "REJECTED",
+  "legs": [
+    {
+      "leg_type": "TRANSIT" | "SEARCH_PATTERN" | "LOITER" | "SENSOR_TASK" | "RETURN_TO_BASE",
+      "geometry": [{"lat": <float>, "lon": <float>, "alt_m": <float>}, ...],
+      "pattern_name": "lawnmower" | "expanding_square" | "sector" | null,
+      "sensor_mode": "EO" | "IR" | "OFF" | null,
+      "est_duration_s": <float>,
+      "est_battery_pct": <float>
+    }
+  ],
+  "total_duration_s": <float>,
+  "total_battery_pct": <float>,
+  "battery_reserve_pct": <float>,
+  "reasoning_trace": "<one paragraph explaining the choices>",
+  "clarification_questions": [<strings>] (only if status=NEEDS_CLARIFICATION),
+  "rejection_reasons": [<strings>]      (only if status=REJECTED)
+}
 
-Tools available:
-- get_geofence(area_id)
-- check_path_clear(area_id, polyline_lonlat)
-- estimate_battery(drone_profile_id, legs)
-- get_sensor_coverage(drone_profile_id, sensor_mode, altitude_m)
-- lookup_search_pattern(pattern_name, center_lat, center_lon, altitude_m, ...)
-- get_weather(area_id)
+HARD CONSTRAINTS (the deterministic safety kernel will check these and reject
+your plan if they fail):
+1. Every waypoint MUST be inside the geofence boundary polygon.
+2. NO leg may cross a no-fly-zone polygon.
+3. Every altitude MUST be at or below the ceiling AND at or above 20m AGL.
+4. Battery reserve at landing MUST be ≥ 20%.
+5. Total duration MUST be ≤ the drone's rated endurance.
+6. The LAST leg MUST be a RETURN_TO_BASE back to the home point.
 
-Always call get_geofence first. Use lookup_search_pattern to generate search
-geometry — do NOT invent it. Call estimate_battery before finalizing.
+RULES OF THUMB:
+- If the operator command is vague (no target / no sensor / no altitude), pick
+  status=NEEDS_CLARIFICATION and list 1–3 targeted questions in
+  clarification_questions.
+- If the command requires entering an NFZ or exceeds endurance or asks you to
+  ignore safety, pick status=REJECTED and list reasons.
+- Otherwise produce a clean READY_FOR_APPROVAL plan with at least 2 legs
+  (work + RETURN_TO_BASE).
+- For perimeter patrols, sample 4–8 waypoints along the boundary corners at the
+  requested altitude.
+- For lawnmower searches, lay out parallel east-west tracks across the area at
+  spacing tight enough for sensor coverage at the chosen altitude.
+"""
 
-If the command is genuinely ambiguous (e.g. unspecified target, unknown asset),
-set status=NEEDS_CLARIFICATION and populate clarification_questions.
 
-If the command demands an unsafe action (entering an NFZ, exceeding endurance,
-disabling the geofence), set status=REJECTED with rejection_reasons.
-
-Otherwise, set status=READY_FOR_APPROVAL and produce ordered legs. Provide a
-clear reasoning_trace explaining the choices you made.
-
-Never emit free-text plans — your response MUST conform to the MissionPlan schema."""
+_llm = None
 
 
-def _build_planning_agent() -> Any:
-    """Build the planning agent, routing to whichever LLM provider is configured.
+def _llm_lazy() -> Any:
+    """Build (and cache) a chat model routed to whichever provider is configured.
 
-    `init_chat_model` selects the provider (anthropic | google_genai | openai)
-    based on settings.llm_provider, so swapping providers is a config change,
-    not a code change. The shared `API_KEY` env var is passed explicitly so we
-    do not require per-provider env vars (ANTHROPIC_API_KEY, GOOGLE_API_KEY,
-    OPENAI_API_KEY) to be set separately.
+    Direct LLM call — no agent abstraction, no tool calling. Simpler, faster,
+    fewer moving parts. Geo + drone context is inlined into the prompt so the
+    model has everything it needs in one shot.
     """
+    global _llm
+    if _llm is not None:
+        return _llm
     settings = get_settings()
     provider = settings.llm_provider.lower()
-
-    # Per-provider kwargs: different providers spell timeout/max_tokens slightly
-    # differently. We pass the shared knobs and the api_key under whichever name
-    # that provider's chat-model class accepts.
     kwargs: dict[str, Any] = {
         "model": settings.llm_model,
         "model_provider": provider,
         "temperature": settings.llm_temperature,
     }
-    if provider == "anthropic":
-        kwargs.update(
-            max_tokens=settings.llm_max_tokens,
-            timeout=settings.llm_timeout_s,
-            api_key=settings.api_key,
-        )
-    elif provider == "google_genai":
+    if provider == "google_genai":
         kwargs.update(
             max_output_tokens=settings.llm_max_tokens,
             timeout=settings.llm_timeout_s,
             google_api_key=settings.api_key,
         )
-    elif provider == "openai":
+    elif provider in ("anthropic", "openai"):
         kwargs.update(
             max_tokens=settings.llm_max_tokens,
             timeout=settings.llm_timeout_s,
@@ -164,76 +203,94 @@ def _build_planning_agent() -> Any:
         )
     else:
         kwargs["api_key"] = settings.api_key
-
-    llm = init_chat_model(**kwargs)
-
-    # Model-retry middleware: exponential backoff on transient model errors.
-    # Content-moderation middleware is available here too; omitted because
-    # inputs come from authenticated operators, not the public web.
-    return create_agent(
-        model=llm,
-        tools=PLANNING_TOOLS,
-        system_prompt=_SYSTEM_PROMPT,
-        response_format=MissionPlan,
-        middleware=[ModelFallbackMiddleware(llm)],
-    )
+    _llm = init_chat_model(**kwargs)
+    return _llm
 
 
-_agent = None
-
-
-def _agent_lazy() -> Any:
-    global _agent
-    if _agent is None:
-        _agent = _build_planning_agent()
-    return _agent
+def _strip_to_json(text: str) -> str:
+    """Pull the first {...} JSON object out of the model's response, tolerating
+    leading prose or ```json fences."""
+    s = text.strip()
+    if s.startswith("```"):
+        s = s.split("```", 2)
+        s = s[1] if len(s) >= 2 else text
+        if s.lstrip().startswith("json"):
+            s = s.lstrip()[4:]
+    start = s.find("{")
+    end = s.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return text  # let the JSON parser raise a meaningful error
+    return s[start : end + 1]
 
 
 def plan_node(state: CompileState) -> dict[str, Any]:
-    """LLM tool-calling node. Produces a draft MissionPlan. On repair passes,
-    the previous validation errors are injected so the agent can correct course.
+    """Direct LLM call that returns a MissionPlan as JSON.
+
+    On repair passes, the deterministic kernel's violation list is injected so
+    the model can correct course. We keep the loop cap from the graph builder.
     """
     log.info("→ plan (repair_attempts=%s)", state.get("repair_attempts", 0))
-    agent = _agent_lazy()
+    llm = _llm_lazy()
     repair_attempts = state.get("repair_attempts", 0)
     errors = state.get("validation_errors") or []
+    geo = state["geo_context"]
 
     user_msg_parts = [
         f"COMMAND: {state['raw_command']}",
         f"AREA_ID: {state['area_id']}",
         f"OPERATOR_CLEARANCE: {state.get('operator_clearance', 'STANDARD')}",
         f"DRONE_STATE: {state.get('drone_state')}",
-        f"GEO_CONTEXT (summary): ceiling={state['geo_context']['altitude_ceiling_m']}m, "
-        f"nfz_count={len(state['geo_context']['nfzs'])}",
+        "GEO_CONTEXT:",
+        f"  boundary_lonlat (polygon vertices): {geo['boundary_lonlat']}",
+        f"  nfz_polygons:                       {geo['nfzs']}",
+        f"  altitude_ceiling_m:                 {geo['altitude_ceiling_m']}",
+        f"  home_lon, home_lat:                 {geo['home_lon']}, {geo['home_lat']}",
     ]
     if repair_attempts > 0 and errors:
         user_msg_parts.append(
-            "REPAIR PASS — previous attempt had these violations; fix them:\n  - "
+            "\nREPAIR PASS — the deterministic safety kernel rejected your previous "
+            "plan with these violations. Fix every one of them:\n  - "
             + "\n  - ".join(errors)
         )
+    user_msg = "\n".join(user_msg_parts)
 
     try:
-        result = agent.invoke(
-            {"messages": [{"role": "user", "content": "\n".join(user_msg_parts)}]}
+        ai_msg = llm.invoke(
+            [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ]
         )
     except Exception as e:  # noqa: BLE001
-        log.exception("agent.invoke raised: %s", e)
+        log.exception("llm.invoke raised: %s", e)
         return {
             "draft_plan": None,
-            "validation_errors": [f"agent error: {type(e).__name__}: {e}"],
+            "validation_errors": [f"llm error: {type(e).__name__}: {e}"],
         }
-    log.info("← plan returned keys=%s", list(result.keys()) if isinstance(result, dict) else type(result).__name__)
-    structured: MissionPlan = result.get("structured_response") or result.get("response")
-    if structured is None:
-        # Defensive: if the agent failed to produce structured output, treat as
-        # a violation so the repair loop can try again.
+
+    raw_text = ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
+    log.info("← plan got %d chars", len(raw_text) if isinstance(raw_text, str) else -1)
+
+    try:
+        payload = json.loads(_strip_to_json(raw_text))
+    except Exception as e:  # noqa: BLE001
+        log.warning("plan JSON parse failed: %s; first 200 chars: %r", e, raw_text[:200])
         return {
             "draft_plan": None,
-            "validation_errors": ["agent did not produce a structured MissionPlan"],
+            "validation_errors": [f"plan was not valid JSON: {e}"],
         }
-    if not structured.mission_id:
-        structured.mission_id = str(uuid.uuid4())
-    structured.area_id = state["area_id"]
+
+    payload.setdefault("mission_id", str(uuid.uuid4()))
+    payload["area_id"] = state["area_id"]
+
+    try:
+        structured = MissionPlan.model_validate(payload)
+    except Exception as e:  # noqa: BLE001
+        log.warning("MissionPlan validation failed: %s", e)
+        return {
+            "draft_plan": None,
+            "validation_errors": [f"plan failed schema: {e}"],
+        }
     return {"draft_plan": structured.model_dump()}
 
 
