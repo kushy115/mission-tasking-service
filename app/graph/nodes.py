@@ -15,7 +15,7 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelFallbackMiddleware
-from langchain_anthropic import ChatAnthropic
+from langchain.chat_models import init_chat_model
 
 from app.config import get_settings
 from app.geo.store import get_engine, load_drone_profile, load_geo_context, save_mission
@@ -124,17 +124,51 @@ Never emit free-text plans — your response MUST conform to the MissionPlan sch
 
 
 def _build_planning_agent() -> Any:
+    """Build the planning agent, routing to whichever LLM provider is configured.
+
+    `init_chat_model` selects the provider (anthropic | google_genai | openai)
+    based on settings.llm_provider, so swapping providers is a config change,
+    not a code change. The shared `API_KEY` env var is passed explicitly so we
+    do not require per-provider env vars (ANTHROPIC_API_KEY, GOOGLE_API_KEY,
+    OPENAI_API_KEY) to be set separately.
+    """
     settings = get_settings()
-    llm = ChatAnthropic(
-        model=settings.llm_model,
-        temperature=settings.llm_temperature,
-        max_tokens=settings.llm_max_tokens,
-        timeout=settings.llm_timeout_s,
-        api_key=settings.api_key,
-    )
+    provider = settings.llm_provider.lower()
+
+    # Per-provider kwargs: different providers spell timeout/max_tokens slightly
+    # differently. We pass the shared knobs and the api_key under whichever name
+    # that provider's chat-model class accepts.
+    kwargs: dict[str, Any] = {
+        "model": settings.llm_model,
+        "model_provider": provider,
+        "temperature": settings.llm_temperature,
+    }
+    if provider == "anthropic":
+        kwargs.update(
+            max_tokens=settings.llm_max_tokens,
+            timeout=settings.llm_timeout_s,
+            api_key=settings.api_key,
+        )
+    elif provider == "google_genai":
+        kwargs.update(
+            max_output_tokens=settings.llm_max_tokens,
+            timeout=settings.llm_timeout_s,
+            google_api_key=settings.api_key,
+        )
+    elif provider == "openai":
+        kwargs.update(
+            max_tokens=settings.llm_max_tokens,
+            timeout=settings.llm_timeout_s,
+            api_key=settings.api_key,
+        )
+    else:
+        kwargs["api_key"] = settings.api_key
+
+    llm = init_chat_model(**kwargs)
+
     # Model-retry middleware: exponential backoff on transient model errors.
-    # Note: content-moderation middleware is available here too; we omit it
-    # because inputs come from authenticated operators, not the public web.
+    # Content-moderation middleware is available here too; omitted because
+    # inputs come from authenticated operators, not the public web.
     return create_agent(
         model=llm,
         tools=PLANNING_TOOLS,

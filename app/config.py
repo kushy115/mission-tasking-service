@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     port: int = Field(8000, alias="MTS_PORT")
 
     api_key: str = Field("", alias="API_KEY")
-    llm_model: str = Field("claude-sonnet-4-6", alias="MTS_LLM_MODEL")
+    llm_provider: str = Field("google_genai", alias="MTS_LLM_PROVIDER")
+    llm_model: str = Field("gemini-2.5-flash", alias="MTS_LLM_MODEL")
     llm_temperature: float = Field(0.0, alias="MTS_LLM_TEMPERATURE")
     llm_max_tokens: int = Field(4096, alias="MTS_LLM_MAX_TOKENS")
     llm_timeout_s: int = Field(60, alias="MTS_LLM_TIMEOUT_S")
