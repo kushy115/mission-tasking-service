@@ -3,9 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>MTS — Mission Compiler</title>
+  <title>MTS — Mission Tasking Service</title>
 
-  <!-- Leaflet for the map (CDN, no install needed) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -13,147 +16,423 @@
 
   <style>
     :root {
-      --bg: #0f1419;
-      --panel: #1a2030;
-      --panel-2: #232a3d;
-      --border: #2d3548;
-      --fg: #e6e9ef;
-      --muted: #8a93a8;
-      --accent: #4a9eff;
-      --ok: #4ade80;
-      --warn: #fbbf24;
-      --err: #f87171;
+      --bg:        #0a0e17;
+      --bg-elev:   #111726;
+      --panel:     #161d2e;
+      --panel-2:   #1d2538;
+      --border:    #283047;
+      --border-strong: #3a4361;
+      --fg:        #e8ecf4;
+      --fg-dim:    #b8c0d4;
+      --muted:     #6f7891;
+      --accent:    #5b9bff;
+      --accent-2:  #4a87ee;
+      --accent-soft: rgba(91, 155, 255, 0.12);
+      --ok:        #4ade80;
+      --ok-soft:   rgba(74, 222, 128, 0.12);
+      --warn:      #f5c463;
+      --warn-soft: rgba(245, 196, 99, 0.12);
+      --err:       #ef6764;
+      --err-soft:  rgba(239, 103, 100, 0.12);
+      --radius:    10px;
+      --radius-sm: 6px;
+      --shadow-1:  0 1px 2px rgba(0,0,0,0.25);
+      --shadow-2:  0 8px 24px rgba(0,0,0,0.35);
     }
+
     * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--fg);
-      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
-    header { display: flex; justify-content: space-between; align-items: center;
-      padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border); }
-    header h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0.3px; }
-    header .health { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
-    header .health .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-    header .health .dot.ok { background: var(--ok); }
-    header .health .dot.err { background: var(--err); }
-
-    main { display: grid; grid-template-columns: 380px 1fr; gap: 16px; padding: 16px;
-      height: calc(100vh - 50px); }
-    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-      padding: 16px; overflow: auto; }
-    .panel h2 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase;
-      letter-spacing: 0.5px; color: var(--muted); }
-
-    label { display: block; margin: 12px 0 4px; font-size: 12px; color: var(--muted); }
-    select, input, textarea {
-      width: 100%; background: var(--panel-2); border: 1px solid var(--border);
-      color: var(--fg); padding: 8px 10px; border-radius: 6px; font: inherit;
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      background: var(--bg); color: var(--fg);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      font-size: 14px; line-height: 1.5;
+      font-feature-settings: 'cv11', 'ss01', 'ss03';
+      -webkit-font-smoothing: antialiased;
     }
-    textarea { resize: vertical; min-height: 90px; font-family: inherit; }
-    select:focus, input:focus, textarea:focus { outline: none; border-color: var(--accent); }
-    .row { display: flex; gap: 10px; align-items: center; }
-    .row > * { flex: 1; }
-    button { background: var(--accent); color: white; border: 0; padding: 10px 14px;
-      border-radius: 6px; cursor: pointer; font: inherit; font-weight: 500; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    button.secondary { background: var(--panel-2); color: var(--fg); border: 1px solid var(--border); }
-    button.ok { background: var(--ok); color: #0f1419; }
-    button.danger { background: var(--err); color: white; }
+    code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; }
 
-    .examples { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
-    .examples button { background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
-      font-size: 11px; padding: 4px 8px; }
-    .examples button:hover { color: var(--fg); border-color: var(--accent); }
+    /* ---------- header ---------- */
+    header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 24px;
+      background: linear-gradient(180deg, var(--bg-elev) 0%, var(--panel) 100%);
+      border-bottom: 1px solid var(--border);
+      box-shadow: var(--shadow-1);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-mark {
+      width: 28px; height: 28px; border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent) 0%, #7d5fff 100%);
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; font-weight: 700; font-size: 14px;
+      box-shadow: 0 4px 12px rgba(91, 155, 255, 0.35);
+    }
+    .brand-name { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
+    .brand-sub { font-size: 12px; color: var(--muted); margin-left: 6px; }
 
+    .header-right { display: flex; align-items: center; gap: 18px; }
+    .health { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+    .health .dot {
+      width: 7px; height: 7px; border-radius: 50%; background: var(--muted);
+      box-shadow: 0 0 0 3px rgba(111, 120, 145, 0.15);
+      transition: all 0.2s;
+    }
+    .health .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+    .health .dot.err { background: var(--err); box-shadow: 0 0 0 3px var(--err-soft); }
+    .nav-links { display: flex; gap: 14px; }
+    .nav-link {
+      color: var(--muted); font-size: 12px; text-decoration: none;
+      padding: 4px 0; border-bottom: 1px solid transparent;
+      transition: all 0.15s ease;
+    }
+    .nav-link:hover { color: var(--fg); border-bottom-color: var(--accent); }
+
+    /* ---------- layout ---------- */
+    main {
+      display: grid; grid-template-columns: 400px 1fr; gap: 18px;
+      padding: 18px;
+      height: calc(100vh - 57px);
+    }
+    .panel {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 22px;
+      overflow: auto;
+      box-shadow: var(--shadow-1);
+    }
+    .panel h2 {
+      margin: 0 0 4px;
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--muted); font-weight: 600;
+    }
+    .panel .h2-sub {
+      margin: 0 0 18px; font-size: 13px; color: var(--fg-dim);
+    }
+
+    /* ---------- form ---------- */
+    .field { margin-bottom: 14px; }
+    .field label {
+      display: block; margin-bottom: 6px;
+      font-size: 12px; color: var(--fg-dim); font-weight: 500;
+    }
+    .field .hint { color: var(--muted); font-weight: 400; }
+
+    select, input[type="text"], textarea {
+      width: 100%;
+      background: var(--bg-elev); border: 1px solid var(--border);
+      color: var(--fg); padding: 9px 12px; border-radius: var(--radius-sm);
+      font: inherit; font-size: 13px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    select:focus, input:focus, textarea:focus {
+      outline: none; border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    select { appearance: none; -webkit-appearance: none;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8'><path d='M1 1l5 5 5-5' stroke='%236f7891' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
+      background-repeat: no-repeat; background-position: right 12px center;
+      padding-right: 32px;
+    }
+    textarea { resize: vertical; min-height: 90px; font-family: inherit; line-height: 1.55; }
+
+    /* battery slider */
+    .range-row { display: flex; align-items: center; gap: 12px; }
+    input[type="range"] {
+      flex: 1;
+      -webkit-appearance: none; appearance: none;
+      height: 4px; background: var(--bg-elev); border-radius: 2px;
+      outline: none; cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--accent); cursor: pointer;
+      box-shadow: 0 2px 8px rgba(91, 155, 255, 0.4);
+      transition: transform 0.1s;
+    }
+    input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+    .range-val {
+      font-family: 'JetBrains Mono', monospace; font-size: 13px;
+      color: var(--fg); min-width: 42px; text-align: right;
+      background: var(--bg-elev); padding: 4px 8px; border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+
+    /* examples chips */
+    .examples-label {
+      font-size: 11px; color: var(--muted); margin: 14px 0 6px;
+      text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+    }
+    .examples { display: flex; flex-wrap: wrap; gap: 6px; }
+    .examples button {
+      background: var(--bg-elev); color: var(--fg-dim);
+      border: 1px solid var(--border); font-size: 11px;
+      padding: 5px 10px; border-radius: 14px;
+      cursor: pointer; transition: all 0.15s;
+      font-family: inherit;
+    }
+    .examples button:hover {
+      color: var(--fg); border-color: var(--accent); background: var(--accent-soft);
+    }
+
+    /* primary button */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 10px 16px; border-radius: var(--radius-sm);
+      font: inherit; font-size: 13px; font-weight: 500;
+      cursor: pointer; border: 0;
+      transition: all 0.15s; user-select: none;
+    }
+    .btn-primary {
+      background: linear-gradient(180deg, var(--accent) 0%, var(--accent-2) 100%);
+      color: #fff;
+      box-shadow: 0 1px 0 rgba(255,255,255,0.1) inset, 0 4px 12px rgba(91, 155, 255, 0.25);
+    }
+    .btn-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 1px 0 rgba(255,255,255,0.15) inset, 0 6px 16px rgba(91, 155, 255, 0.35); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-ok { background: var(--ok); color: #0a0e17; }
+    .btn-ok:hover { filter: brightness(1.1); }
+    .btn-danger { background: var(--err); color: #fff; }
+    .btn-danger:hover { filter: brightness(1.1); }
+    .btn-ghost {
+      background: var(--bg-elev); color: var(--fg); border: 1px solid var(--border);
+    }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-block { width: 100%; padding: 12px 16px; }
+
+    /* ---------- right column ---------- */
     .right { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-    #map { flex: 1; min-height: 320px; border-radius: 8px; border: 1px solid var(--border);
-      background: var(--panel-2); }
-    .leaflet-container { background: #1a2030; }
+    .map-wrap {
+      position: relative; flex: 1; min-height: 320px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      overflow: hidden;
+      box-shadow: var(--shadow-1);
+    }
+    #map { width: 100%; height: 100%; }
+    .leaflet-container { background: #0d1220; }
 
-    .result { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-      padding: 16px; max-height: 40vh; overflow: auto; }
-    .status-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-    .badge { padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 600;
-      text-transform: uppercase; letter-spacing: 0.5px; }
-    .badge.ready { background: rgba(74, 222, 128, 0.15); color: var(--ok); }
-    .badge.rejected { background: rgba(248, 113, 113, 0.15); color: var(--err); }
-    .badge.clarification { background: rgba(251, 191, 36, 0.15); color: var(--warn); }
-    .badge.error { background: rgba(138, 147, 168, 0.15); color: var(--muted); }
-    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0; }
-    .stat { background: var(--panel-2); padding: 8px 10px; border-radius: 6px; }
-    .stat .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase;
-      letter-spacing: 0.5px; }
-    .stat .val { font-size: 16px; font-weight: 500; margin-top: 2px; }
-    .reasoning { background: var(--panel-2); border-left: 3px solid var(--accent);
-      padding: 10px 12px; border-radius: 4px; font-size: 13px; margin: 10px 0; line-height: 1.6; }
-    .list { margin: 8px 0; padding-left: 18px; }
-    .list li { margin: 4px 0; }
-    .actions { display: flex; gap: 8px; margin-top: 12px; }
+    .legend {
+      position: absolute; bottom: 12px; left: 12px;
+      background: rgba(17, 23, 38, 0.92); backdrop-filter: blur(8px);
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 10px 12px; font-size: 11px; z-index: 1000;
+      box-shadow: var(--shadow-2);
+    }
+    .legend-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+    .legend-swatch { width: 14px; height: 3px; border-radius: 2px; }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
 
-    .empty { color: var(--muted); font-style: italic; padding: 20px; text-align: center; }
+    /* result panel */
+    .result {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 22px;
+      max-height: 45vh; overflow: auto;
+      box-shadow: var(--shadow-1);
+      animation: fadeIn 0.3s ease;
+    }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
-    .spinner { display: inline-block; width: 12px; height: 12px;
-      border: 2px solid var(--accent); border-right-color: transparent;
-      border-radius: 50%; animation: spin 0.8s linear infinite; }
+    .empty-state {
+      text-align: center; padding: 36px 20px;
+      color: var(--muted); font-size: 13px;
+    }
+    .empty-state .empty-icon {
+      font-size: 28px; margin-bottom: 10px; opacity: 0.4;
+    }
+
+    .status-bar {
+      display: flex; align-items: center; gap: 12px;
+      padding-bottom: 14px; margin-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 11px; border-radius: 14px;
+      font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .badge-icon { font-size: 13px; line-height: 1; }
+    .badge.ready { background: var(--ok-soft); color: var(--ok); }
+    .badge.rejected { background: var(--err-soft); color: var(--err); }
+    .badge.clarification { background: var(--warn-soft); color: var(--warn); }
+    .badge.error { background: rgba(111, 120, 145, 0.15); color: var(--muted); }
+    .status-meta {
+      color: var(--muted); font-size: 12px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .status-meta .pill {
+      background: var(--bg-elev); padding: 3px 8px; border-radius: 4px;
+      border: 1px solid var(--border); font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; color: var(--fg-dim);
+    }
+
+    .stats {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+      margin-bottom: 16px;
+    }
+    .stat {
+      background: var(--bg-elev); padding: 10px 12px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+    .stat .lbl {
+      font-size: 10px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+    }
+    .stat .val {
+      font-size: 17px; font-weight: 600; margin-top: 3px;
+      color: var(--fg); letter-spacing: -0.01em;
+      font-feature-settings: 'tnum';
+    }
+    .stat .sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+
+    .section { margin: 14px 0; }
+    .section-title {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--muted); font-weight: 600; margin-bottom: 8px;
+    }
+    .reasoning {
+      background: var(--bg-elev); border-left: 3px solid var(--accent);
+      padding: 12px 14px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      font-size: 13px; line-height: 1.6; color: var(--fg-dim);
+    }
+    .reasons-list { margin: 6px 0 0; padding-left: 18px; }
+    .reasons-list li { margin: 4px 0; font-size: 13px; line-height: 1.5; }
+    .reasons-list.rejected li { color: var(--err); }
+    .reasons-list.clarification li { color: var(--warn); }
+
+    .actions {
+      display: flex; gap: 8px; margin-top: 18px;
+      padding-top: 14px; border-top: 1px solid var(--border);
+    }
+    .toast {
+      margin-top: 14px; padding: 10px 14px;
+      border-radius: var(--radius-sm); font-size: 13px;
+      animation: fadeIn 0.25s ease;
+    }
+    .toast.ok { background: var(--ok-soft); color: var(--ok); border: 1px solid rgba(74, 222, 128, 0.3); }
+    .toast.err { background: var(--err-soft); color: var(--err); border: 1px solid rgba(239, 103, 100, 0.3); }
+
+    /* spinner */
+    .spinner {
+      display: inline-block; width: 13px; height: 13px;
+      border: 2px solid currentColor; border-right-color: transparent;
+      border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: -2px;
+    }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    code { background: var(--panel-2); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+    /* leaflet overrides */
+    .leaflet-tooltip {
+      background: rgba(17, 23, 38, 0.95) !important; color: var(--fg) !important;
+      border: 1px solid var(--border-strong) !important; border-radius: 4px !important;
+      box-shadow: var(--shadow-2) !important; font-size: 11px !important;
+      padding: 4px 8px !important; backdrop-filter: blur(4px);
+    }
+    .leaflet-tooltip-top:before,
+    .leaflet-tooltip-bottom:before { border-top-color: rgba(17, 23, 38, 0.95) !important; }
+    .leaflet-control-zoom a {
+      background: var(--panel) !important; color: var(--fg) !important;
+      border: 1px solid var(--border) !important;
+    }
+    .leaflet-control-zoom a:hover { background: var(--panel-2) !important; }
+
+    /* scrollbar polish */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
   </style>
 </head>
 <body>
 
 <header>
-  <h1>Mission Tasking Service</h1>
-  <div class="health">
-    <span id="health-text">checking...</span>
-    <span id="health-dot" class="dot"></span>
+  <div class="brand">
+    <div class="brand-mark">M</div>
+    <span class="brand-name">Mission Tasking Service</span>
+    <span class="brand-sub">v0.1</span>
+  </div>
+  <div class="header-right">
+    <nav class="nav-links">
+      <a class="nav-link" href="/docs" target="_blank">API Docs</a>
+      <a class="nav-link" href="http://localhost:3000" target="_blank">Grafana</a>
+      <a class="nav-link" href="https://smith.langchain.com" target="_blank">LangSmith</a>
+    </nav>
+    <div class="health">
+      <span id="health-text">checking…</span>
+      <span id="health-dot" class="dot"></span>
+    </div>
   </div>
 </header>
 
 <main>
   <!-- LEFT: form -->
   <section class="panel">
-    <h2>Compile a mission</h2>
+    <h2>Compose mission</h2>
+    <p class="h2-sub">Natural-language command → validated flight plan.</p>
 
-    <label for="area">Operating area</label>
-    <select id="area"></select>
+    <div class="field">
+      <label for="area">Operating area</label>
+      <select id="area"></select>
+    </div>
 
-    <label for="drone">Drone profile</label>
-    <select id="drone"></select>
+    <div class="field">
+      <label for="drone">Drone profile</label>
+      <select id="drone"></select>
+    </div>
 
-    <label for="battery">Starting battery: <span id="batteryVal">100</span>%</label>
-    <input type="range" id="battery" min="20" max="100" value="100" />
+    <div class="field">
+      <label for="battery">Starting battery</label>
+      <div class="range-row">
+        <input type="range" id="battery" min="20" max="100" value="100" />
+        <span class="range-val" id="batteryVal">100%</span>
+      </div>
+    </div>
 
-    <label for="command">Natural-language command</label>
-    <textarea id="command" placeholder="e.g. Patrol the yard perimeter at 60 meters with EO and return to base."></textarea>
+    <div class="field">
+      <label for="command">Mission command <span class="hint">— natural language</span></label>
+      <textarea id="command" placeholder="e.g. Patrol the yard perimeter at 60 meters with EO and return to base."></textarea>
+    </div>
 
+    <div class="examples-label">Try one</div>
     <div class="examples">
-      <button data-cmd="Patrol the yard perimeter at 60 meters with EO and return to base.">perimeter</button>
-      <button data-cmd="Hover above the center of the yard at 50 meters for two minutes and watch with EO.">loiter</button>
-      <button data-cmd="Search the yard at 80 meters using a lawnmower pattern with EO.">lawnmower</button>
-      <button data-cmd="Fly directly over the grain silo.">over NFZ</button>
+      <button data-cmd="Patrol the yard perimeter at 60 meters with EO and return to base.">perimeter patrol</button>
+      <button data-cmd="Hover above the center of the yard at 50 meters for two minutes and watch with EO.">loiter + watch</button>
+      <button data-cmd="Search the yard at 80 meters using a lawnmower pattern with EO sensor.">lawnmower</button>
+      <button data-cmd="Fly directly over the grain silo.">NFZ violation</button>
       <button data-cmd="Go check something out there.">vague</button>
     </div>
 
-    <div style="margin-top: 16px;">
-      <button id="compile" style="width:100%;">Compile mission</button>
+    <div style="margin-top: 20px;">
+      <button id="compile" class="btn btn-primary btn-block">Compile mission</button>
     </div>
   </section>
 
   <!-- RIGHT: map + result -->
   <section class="right">
-    <div id="map"></div>
+    <div class="map-wrap">
+      <div id="map"></div>
+      <div class="legend">
+        <div class="legend-row"><div class="legend-swatch" style="background:#5b9bff;"></div>Boundary</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:#ef6764;"></div>No-fly zone</div>
+        <div class="legend-row"><div class="legend-dot" style="background:#4ade80;"></div>Home base</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:#5b9bff;"></div>Transit / RTB</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:#a78bfa;"></div>Search pattern</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:#f5c463;"></div>Loiter / sensor</div>
+      </div>
+    </div>
     <div id="result" class="result">
-      <div class="empty">No mission yet — fill out the form and click <b>Compile</b>.</div>
+      <div class="empty-state">
+        <div class="empty-icon">📋</div>
+        <div>No mission yet. Fill out the form on the left and click <b style="color: var(--fg-dim);">Compile mission</b>.</div>
+      </div>
     </div>
   </section>
 </main>
 
 <script defer>
 window.addEventListener('DOMContentLoaded', () => {
-
   let map, areaLayer = null, planLayer = null;
   let currentAreas = [], currentDrones = [], currentPlan = null;
 
-  // ---- elements
   const $ = (id) => document.getElementById(id);
   const areaSel = $('area'), droneSel = $('drone');
   const battery = $('battery'), batteryVal = $('batteryVal');
@@ -161,38 +440,39 @@ window.addEventListener('DOMContentLoaded', () => {
   const resultEl = $('result');
   const healthText = $('health-text'), healthDot = $('health-dot');
 
-  // ---- initialize map (centered roughly on first area when loaded)
+  // ----- map: dark basemap from CartoDB
   map = L.map('map', { zoomControl: true, attributionControl: false })
     .setView([40.72, -74.17], 14);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    { maxZoom: 19 }).addTo(map);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19, subdomains: 'abcd',
+  }).addTo(map);
 
-  // ---- battery slider
-  battery.addEventListener('input', () => batteryVal.textContent = battery.value);
+  // ----- battery slider
+  battery.addEventListener('input', () => batteryVal.textContent = battery.value + '%');
 
-  // ---- examples → command
+  // ----- examples
   document.querySelectorAll('.examples button').forEach(b =>
-    b.addEventListener('click', () => command.value = b.dataset.cmd));
+    b.addEventListener('click', () => { command.value = b.dataset.cmd; command.focus(); }));
 
-  // ---- health check (polled every 5s)
+  // ----- health poll
   async function ping() {
     try {
       const r = await fetch('/healthz');
       if (!r.ok) throw 0;
-      healthText.textContent = 'service: ok';
+      healthText.textContent = 'service ready';
       healthDot.className = 'dot ok';
     } catch {
-      healthText.textContent = 'service: down';
+      healthText.textContent = 'service down';
       healthDot.className = 'dot err';
     }
   }
   ping(); setInterval(ping, 5000);
 
-  // ---- load areas + drones into dropdowns
+  // ----- load areas + drones
   async function loadAreas() {
     currentAreas = await (await fetch('/v1/areas')).json();
     areaSel.innerHTML = currentAreas.map(a =>
-      `<option value="${a.area_id}">${a.area_id}</option>`).join('');
+      `<option value="${a.area_id}">${a.area_id} — ceiling ${a.ceiling_m}m</option>`).join('');
     drawAreaOnMap(currentAreas[0]);
     areaSel.addEventListener('change', () => {
       const a = currentAreas.find(x => x.area_id === areaSel.value);
@@ -202,62 +482,74 @@ window.addEventListener('DOMContentLoaded', () => {
   async function loadDrones() {
     currentDrones = await (await fetch('/v1/drones')).json();
     droneSel.innerHTML = currentDrones.map(d => {
-      const endur = d.rated_endurance_s ? ` (${Math.round(d.rated_endurance_s/60)}min)` : '';
+      const endur = d.rated_endurance_s ? ` — ${Math.round(d.rated_endurance_s/60)}min endurance` : '';
       return `<option value="${d.profile_id}">${d.profile_id}${endur}</option>`;
     }).join('');
   }
 
-  // ---- draw area: boundary (blue), NFZs (red), home (green pin)
+  // ----- draw area
   function drawAreaOnMap(area) {
     if (areaLayer) map.removeLayer(areaLayer);
     if (planLayer) { map.removeLayer(planLayer); planLayer = null; }
     if (!area) return;
     const layers = [];
     layers.push(L.geoJSON(area.boundary, {
-      style: { color: '#4a9eff', weight: 2, fillOpacity: 0.05 }
-    }).bindTooltip(`Boundary — ceiling ${area.ceiling_m}m`));
+      style: { color: '#5b9bff', weight: 2.5, fillOpacity: 0.04, opacity: 0.9, dashArray: '0' }
+    }).bindTooltip(`Boundary · ceiling ${area.ceiling_m}m`, { sticky: true }));
     area.nfzs.forEach((nfz, i) => layers.push(L.geoJSON(nfz, {
-      style: { color: '#f87171', weight: 2, fillOpacity: 0.2 }
-    }).bindTooltip(`NFZ #${i+1}`)));
+      style: { color: '#ef6764', weight: 2, fillOpacity: 0.18, opacity: 0.95 }
+    }).bindTooltip(`No-fly zone ${i+1}`, { sticky: true })));
     layers.push(L.circleMarker([area.home_lat, area.home_lon], {
-      radius: 6, color: '#4ade80', fillColor: '#4ade80', fillOpacity: 1
-    }).bindTooltip('Home base'));
+      radius: 7, color: '#4ade80', fillColor: '#4ade80', fillOpacity: 1, weight: 2
+    }).bindTooltip('Home base', { permanent: false }));
     areaLayer = L.layerGroup(layers).addTo(map);
-    map.fitBounds(L.geoJSON(area.boundary).getBounds(), { padding: [30, 30] });
+    map.fitBounds(L.geoJSON(area.boundary).getBounds(), { padding: [40, 40] });
   }
 
-  // ---- draw plan: each leg as a polyline + numbered markers
+  // ----- draw plan
   function drawPlanOnMap(plan) {
     if (planLayer) map.removeLayer(planLayer);
     if (!plan.legs || !plan.legs.length) return;
-    const legColors = { TRANSIT: '#4a9eff', SEARCH_PATTERN: '#a78bfa',
-      LOITER: '#fbbf24', SENSOR_TASK: '#fbbf24', RETURN_TO_BASE: '#4ade80' };
+    const legColors = {
+      TRANSIT: '#5b9bff',
+      SEARCH_PATTERN: '#a78bfa',
+      LOITER: '#f5c463',
+      SENSOR_TASK: '#f5c463',
+      RETURN_TO_BASE: '#4ade80'
+    };
     const layers = [];
     let wpCount = 0;
     plan.legs.forEach((leg, li) => {
       const pts = leg.geometry.map(w => [w.lat, w.lon]);
+      const col = legColors[leg.leg_type] || '#fff';
       if (pts.length >= 2) {
-        layers.push(L.polyline(pts, {
-          color: legColors[leg.leg_type] || '#fff', weight: 3, opacity: 0.9
-        }).bindTooltip(`Leg ${li+1}: ${leg.leg_type}${leg.sensor_mode ? ' · ' + leg.sensor_mode : ''}`));
+        // Glow effect: two stacked polylines
+        layers.push(L.polyline(pts, { color: col, weight: 7, opacity: 0.18 }));
+        layers.push(L.polyline(pts, { color: col, weight: 3, opacity: 0.95 })
+          .bindTooltip(`Leg ${li+1}: ${leg.leg_type}${leg.sensor_mode && leg.sensor_mode !== 'OFF' ? ' · ' + leg.sensor_mode : ''}`,
+                       { sticky: true }));
       }
       leg.geometry.forEach((w) => {
         wpCount++;
         layers.push(L.circleMarker([w.lat, w.lon], {
-          radius: 4, color: legColors[leg.leg_type] || '#fff', fillOpacity: 1
-        }).bindTooltip(`WP ${wpCount} · alt ${w.alt_m}m`));
+          radius: 4.5, color: col, fillColor: '#0a0e17', fillOpacity: 1, weight: 2
+        }).bindTooltip(`Waypoint ${wpCount} · ${w.alt_m.toFixed(0)}m AGL`, { sticky: true }));
       });
     });
     planLayer = L.layerGroup(layers).addTo(map);
   }
 
-  // ---- compile
+  // ----- compile
   compileBtn.addEventListener('click', async () => {
     const cmd = command.value.trim();
     if (!cmd) { command.focus(); return; }
     compileBtn.disabled = true;
-    compileBtn.innerHTML = '<span class="spinner"></span> Compiling...';
-    resultEl.innerHTML = '<div class="empty"><span class="spinner"></span> Asking the planner...</div>';
+    compileBtn.innerHTML = '<span class="spinner"></span> Compiling…';
+    resultEl.innerHTML = `
+      <div class="empty-state">
+        <div class="spinner" style="color: var(--accent);"></div>
+        <div style="margin-top: 10px;">Asking the planner…</div>
+      </div>`;
 
     try {
       const r = await fetch('/v1/missions:compile', {
@@ -276,64 +568,91 @@ window.addEventListener('DOMContentLoaded', () => {
       renderResult(body);
       drawPlanOnMap(body.plan);
     } catch (e) {
-      resultEl.innerHTML = `<div class="status-row"><span class="badge error">error</span></div>
-        <pre style="color:var(--err); white-space:pre-wrap;">${escapeHtml(e.message)}</pre>`;
+      resultEl.innerHTML = `
+        <div class="status-bar">
+          <span class="badge error"><span class="badge-icon">⚠</span>error</span>
+        </div>
+        <pre style="color: var(--err); white-space: pre-wrap; font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.5;">${escapeHtml(e.message)}</pre>`;
     } finally {
       compileBtn.disabled = false;
       compileBtn.textContent = 'Compile mission';
     }
   });
 
-  // ---- result rendering
+  // ----- render result
   function renderResult(body) {
     const p = body.plan;
-    const badgeCls = { READY_FOR_APPROVAL: 'ready', REJECTED: 'rejected',
-      NEEDS_CLARIFICATION: 'clarification' }[p.status] || 'error';
+    const badgeMap = {
+      READY_FOR_APPROVAL: { cls: 'ready', icon: '✓', label: 'Ready for approval' },
+      REJECTED: { cls: 'rejected', icon: '✕', label: 'Rejected' },
+      NEEDS_CLARIFICATION: { cls: 'clarification', icon: '?', label: 'Needs clarification' }
+    };
+    const b = badgeMap[p.status] || { cls: 'error', icon: '⚠', label: p.status };
+
     let html = `
-      <div class="status-row">
-        <span class="badge ${badgeCls}">${p.status.replace(/_/g, ' ')}</span>
-        <span style="color: var(--muted); font-size: 12px;">
-          mission <code>${p.mission_id}</code> · ${body.repair_loops} repair loop(s)
-        </span>
+      <div class="status-bar">
+        <span class="badge ${b.cls}"><span class="badge-icon">${b.icon}</span>${b.label}</span>
+        <div class="status-meta">
+          <span class="pill">${p.mission_id}</span>
+          <span>${body.repair_loops} repair${body.repair_loops === 1 ? '' : 's'}</span>
+        </div>
       </div>`;
 
     if (p.legs && p.legs.length) {
       html += `<div class="stats">
-        <div class="stat"><div class="lbl">Legs</div><div class="val">${p.legs.length}</div></div>
-        <div class="stat"><div class="lbl">Duration</div><div class="val">${(p.total_duration_s/60).toFixed(1)}m</div></div>
-        <div class="stat"><div class="lbl">Battery used</div><div class="val">${p.total_battery_pct.toFixed(1)}%</div></div>
-        <div class="stat"><div class="lbl">Reserve</div><div class="val">${p.battery_reserve_pct.toFixed(1)}%</div></div>
+        <div class="stat">
+          <div class="lbl">Legs</div>
+          <div class="val">${p.legs.length}</div>
+        </div>
+        <div class="stat">
+          <div class="lbl">Duration</div>
+          <div class="val">${(p.total_duration_s/60).toFixed(1)}<span style="font-size:12px; color:var(--muted);">m</span></div>
+          <div class="sub">${p.total_duration_s.toFixed(0)}s total</div>
+        </div>
+        <div class="stat">
+          <div class="lbl">Battery used</div>
+          <div class="val">${p.total_battery_pct.toFixed(0)}<span style="font-size:12px; color:var(--muted);">%</span></div>
+        </div>
+        <div class="stat">
+          <div class="lbl">Reserve</div>
+          <div class="val" style="color: ${p.battery_reserve_pct >= 20 ? 'var(--ok)' : 'var(--err)'};">${p.battery_reserve_pct.toFixed(0)}<span style="font-size:12px; color:var(--muted);">%</span></div>
+        </div>
       </div>`;
     }
 
     if (p.reasoning_trace) {
-      html += `<div class="reasoning">${escapeHtml(p.reasoning_trace)}</div>`;
+      html += `<div class="section">
+        <div class="section-title">Planner reasoning</div>
+        <div class="reasoning">${escapeHtml(p.reasoning_trace)}</div>
+      </div>`;
     }
 
     if (p.rejection_reasons && p.rejection_reasons.length) {
-      html += `<div><strong style="color: var(--err);">Rejection reasons:</strong>
-        <ul class="list">${p.rejection_reasons.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul></div>`;
+      html += `<div class="section">
+        <div class="section-title" style="color: var(--err);">Why it was rejected</div>
+        <ul class="reasons-list rejected">${p.rejection_reasons.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul>
+      </div>`;
     }
     if (p.clarification_questions && p.clarification_questions.length) {
-      html += `<div><strong style="color: var(--warn);">Clarification questions:</strong>
-        <ul class="list">${p.clarification_questions.map(q => `<li>${escapeHtml(q)}</li>`).join('')}</ul></div>`;
+      html += `<div class="section">
+        <div class="section-title" style="color: var(--warn);">Operator clarifications needed</div>
+        <ul class="reasons-list clarification">${p.clarification_questions.map(q => `<li>${escapeHtml(q)}</li>`).join('')}</ul>
+      </div>`;
     }
 
     if (p.status === 'READY_FOR_APPROVAL') {
       html += `<div class="actions">
-        <button class="ok" id="approve">Approve</button>
-        <button class="secondary" id="verify">Verify (sim)</button>
-        <button class="danger" id="reject">Reject</button>
+        <button class="btn btn-ok" id="approve">✓ Approve</button>
+        <button class="btn btn-ghost" id="verify">Verify (sim)</button>
+        <button class="btn btn-danger" id="reject">Reject</button>
       </div>`;
     }
 
     resultEl.innerHTML = html;
 
-    // Bind dynamic buttons
-    const approveBtn = $('approve'), verifyBtn = $('verify'), rejectBtn = $('reject');
-    if (approveBtn) approveBtn.onclick = () => submitApproval(true);
-    if (rejectBtn) rejectBtn.onclick = () => submitApproval(false);
-    if (verifyBtn) verifyBtn.onclick = runVerify;
+    $('approve')?.addEventListener('click', () => submitApproval(true));
+    $('reject')?.addEventListener('click', () => submitApproval(false));
+    $('verify')?.addEventListener('click', runVerify);
   }
 
   async function submitApproval(approve) {
@@ -346,25 +665,38 @@ window.addEventListener('DOMContentLoaded', () => {
       const body = await r.json();
       if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
       const note = document.createElement('div');
-      note.style.cssText = 'margin-top:10px; color:' + (approve ? 'var(--ok)' : 'var(--err)') + ';';
-      note.textContent = approve ? `✓ Approved (${body.final_status})` : `✗ ${body.final_status}`;
+      note.className = 'toast ' + (approve ? 'ok' : 'err');
+      note.textContent = approve ? `✓ Approved — final status: ${body.final_status}` : `✗ Rejected by operator (${body.final_status})`;
       resultEl.appendChild(note);
-    } catch (e) { alert('Approval failed: ' + e.message); }
+    } catch (e) {
+      const note = document.createElement('div');
+      note.className = 'toast err';
+      note.textContent = 'Approval failed: ' + e.message;
+      resultEl.appendChild(note);
+    }
   }
 
   async function runVerify() {
     if (!currentPlan) return;
+    const oldBtn = $('verify');
+    if (oldBtn) { oldBtn.disabled = true; oldBtn.innerHTML = '<span class="spinner"></span> Simulating…'; }
     try {
       const r = await fetch(`/v1/missions/${currentPlan.mission_id}:verify`, { method: 'POST' });
       const body = await r.json();
       if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
-      const summary = document.createElement('div');
-      summary.style.cssText = 'margin-top:10px; padding:10px; background:var(--panel-2); border-radius:6px;';
-      summary.innerHTML = `<strong>${body.flown_ok ? '✓' : '✗'} verifier:</strong>
-        actual ${body.actual_duration_s.toFixed(0)}s · ${body.actual_battery_pct.toFixed(1)}% battery` +
-        (body.deviations.length ? `<br><span style="color:var(--err)">deviations: ${body.deviations.join('; ')}</span>` : '');
-      resultEl.appendChild(summary);
-    } catch (e) { alert('Verify failed: ' + e.message); }
+      const note = document.createElement('div');
+      note.className = 'toast ' + (body.flown_ok ? 'ok' : 'err');
+      note.innerHTML = `<strong>${body.flown_ok ? '✓ Verifier passed' : '✗ Verifier flagged deviations'}</strong> · actual ${body.actual_duration_s.toFixed(0)}s · ${body.actual_battery_pct.toFixed(1)}% battery` +
+        (body.deviations.length ? `<br><small style="opacity:0.85;">${body.deviations.join('<br>')}</small>` : '');
+      resultEl.appendChild(note);
+    } catch (e) {
+      const note = document.createElement('div');
+      note.className = 'toast err';
+      note.textContent = 'Verify failed: ' + e.message;
+      resultEl.appendChild(note);
+    } finally {
+      if (oldBtn) { oldBtn.disabled = false; oldBtn.textContent = 'Verify (sim)'; }
+    }
   }
 
   function escapeHtml(s) {
@@ -372,7 +704,6 @@ window.addEventListener('DOMContentLoaded', () => {
       ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   }
 
-  // ---- bootstrap
   loadAreas();
   loadDrones();
 });
