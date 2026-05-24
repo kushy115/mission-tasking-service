@@ -52,6 +52,15 @@ services:
       REDIS_URL: redis://redis:6379/0
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     ports: ["8000:8000"]
+    # Auto-recover from OOM kills so the client gets a real error response next
+    # request instead of a hung connection.
+    restart: on-failure
+    # Explicit memory ceiling so failures are visible & predictable rather than
+    # depending on Docker Desktop's default cgroup behavior.
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     depends_on:
       postgres:
         condition: service_healthy
