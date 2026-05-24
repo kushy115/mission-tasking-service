@@ -140,7 +140,7 @@ def _build_planning_agent() -> Any:
         tools=PLANNING_TOOLS,
         system_prompt=_SYSTEM_PROMPT,
         response_format=MissionPlan,
-        middleware=[ModelFallbackMiddleware(models=[llm])],
+        middleware=[ModelFallbackMiddleware(llm)],
     )
 
 
