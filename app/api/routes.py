@@ -16,7 +16,14 @@ from app.api.models import (
     CompileResponse,
     VerifyResponse,
 )
-from app.geo.store import get_engine, load_drone_profile, load_mission, set_mission_approval
+from app.geo.store import (
+    get_engine,
+    list_areas,
+    list_drones,
+    load_drone_profile,
+    load_mission,
+    set_mission_approval,
+)
 from app.observability.metrics import (
     CLARIFICATIONS_TOTAL,
     COMPILE_DURATION,
@@ -35,6 +42,18 @@ router = APIRouter()
 @router.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/v1/areas")
+def list_areas_endpoint() -> list[dict]:
+    """Return all operating areas with boundary + NFZs as GeoJSON. Used by the UI."""
+    return list_areas(get_engine())
+
+
+@router.get("/v1/drones")
+def list_drones_endpoint() -> list[dict]:
+    """Return all drone profiles. Used by the UI."""
+    return list_drones(get_engine())
 
 
 @router.get("/readyz")

@@ -12,7 +12,11 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
 
@@ -72,6 +76,17 @@ def create_app() -> FastAPI:
     @app.get("/metrics")
     def metrics() -> Response:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+    # Single-page UI for compiling missions in a browser.
+    # Lives in app/static/index.html; the file gets copied into the Docker
+    # image because the Dockerfile copies the whole `app/` tree.
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+        @app.get("/", include_in_schema=False)
+        def ui_index() -> FileResponse:
+            return FileResponse(str(static_dir / "index.html"))
 
     return app
 

@@ -244,3 +244,39 @@ def load_mission(engine: Engine, mission_id: str) -> dict | None:
 
 def geojson_from_polygon(poly: Polygon) -> dict:
     return mapping(poly)
+
+
+def list_areas(engine: Engine) -> list[dict]:
+    """All areas with boundary + NFZs as GeoJSON. Used by the UI map."""
+    out: list[dict] = []
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT area_id, ST_AsGeoJSON(boundary), ceiling_m, home_lon, home_lat FROM areas ORDER BY area_id"
+            )
+        ).all()
+        for area_id, bnd_json, ceiling_m, hlon, hlat in rows:
+            nfz_rows = conn.execute(
+                text("SELECT ST_AsGeoJSON(geom) FROM nfzs WHERE area_id = :a"),
+                {"a": area_id},
+            ).all()
+            out.append(
+                {
+                    "area_id": area_id,
+                    "boundary": json.loads(bnd_json),
+                    "nfzs": [json.loads(r[0]) for r in nfz_rows],
+                    "ceiling_m": float(ceiling_m),
+                    "home_lon": float(hlon),
+                    "home_lat": float(hlat),
+                }
+            )
+    return out
+
+
+def list_drones(engine: Engine) -> list[dict]:
+    """All drone profiles. Used by the UI dropdown."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT profile_id, profile FROM drones ORDER BY profile_id")
+        ).all()
+    return [{"profile_id": pid, **(profile or {})} for pid, profile in rows]
