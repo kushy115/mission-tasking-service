@@ -14,10 +14,19 @@ import uuid
 from typing import Any
 
 import json
+import time
 
 from langchain.chat_models import init_chat_model
 
 from app.config import get_settings
+from app.observability.metrics import (
+    LLM_CALLS_TOTAL,
+    LLM_DURATION,
+    PLAN_BATTERY_PCT,
+    PLAN_DURATION,
+    PLAN_LEGS,
+    VALIDATION_VIOLATIONS,
+)
 from app.geo.store import get_engine, load_drone_profile, load_geo_context, save_mission
 from app.graph.state import CompileState
 from app.schemas.enums import MissionStatus
@@ -277,6 +286,9 @@ def plan_node(state: CompileState) -> dict[str, Any]:
         )
     user_msg = "\n".join(user_msg_parts)
 
+    settings = get_settings()
+    provider, model = settings.llm_provider, settings.llm_model
+    start = time.perf_counter()
     try:
         ai_msg = llm.invoke(
             [
@@ -286,10 +298,15 @@ def plan_node(state: CompileState) -> dict[str, Any]:
         )
     except Exception as e:  # noqa: BLE001
         log.exception("llm.invoke raised: %s", e)
+        outcome = "rate_limited" if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) else "error"
+        LLM_CALLS_TOTAL.labels(provider, model, outcome).inc()
+        LLM_DURATION.labels(provider, model).observe(time.perf_counter() - start)
         return {
             "draft_plan": None,
             "validation_errors": [f"llm error: {type(e).__name__}: {e}"],
         }
+    LLM_CALLS_TOTAL.labels(provider, model, "ok").inc()
+    LLM_DURATION.labels(provider, model).observe(time.perf_counter() - start)
 
     raw_text = ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
     log.info("← plan got %d chars", len(raw_text) if isinstance(raw_text, str) else -1)
@@ -345,6 +362,20 @@ def validate_node(state: CompileState) -> dict[str, Any]:
     starting_pct = float(state["drone_state"].get("battery_pct", 100.0))
 
     violations, report = validate_plan(plan, geo, profile, starting_battery_pct=starting_pct)
+
+    # Record each FAILED check so the dashboard can show which safety checks
+    # trip most often (e.g. coverage-gap dominates → planner's pattern logic
+    # is weak; battery dominates → planner is over-budgeting).
+    for check_name in (
+        "inside_geofence",
+        "avoids_nfz",
+        "battery_within_budget",
+        "within_endurance",
+        "sensor_coverage_adequate",
+        "ends_with_rtb",
+    ):
+        if not getattr(report, check_name):
+            VALIDATION_VIOLATIONS.labels(check_name).inc()
 
     return {
         "draft_plan": plan.model_dump(),
@@ -427,6 +458,14 @@ def finalize_node(state: CompileState) -> dict[str, Any]:  # noqa: D401
         plan.rejection_reasons = ["no plan produced"]
     else:
         plan.status = MissionStatus.READY_FOR_APPROVAL
+
+    # Record plan-shape metrics only for plans that actually flew through the
+    # planner (skip NEEDS_CLARIFICATION/REJECTED-from-intake — those have no
+    # legs and would skew the histograms toward zero).
+    if plan.status == MissionStatus.READY_FOR_APPROVAL and plan.legs:
+        PLAN_LEGS.observe(len(plan.legs))
+        PLAN_BATTERY_PCT.observe(plan.total_battery_pct)
+        PLAN_DURATION.observe(plan.total_duration_s)
 
     try:
         save_mission(get_engine(), plan.model_dump())

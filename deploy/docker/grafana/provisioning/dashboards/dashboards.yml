@@ -1,0 +1,13 @@
+# Auto-provisioned dashboard provider — points Grafana at the JSON files in
+# /var/lib/grafana/dashboards (mounted from deploy/docker/grafana/dashboards).
+apiVersion: 1
+
+providers:
+  - name: MTS
+    folder: MTS
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

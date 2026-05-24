@@ -36,7 +36,15 @@ services:
     image: grafana/grafana:11.2.0
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
+      # Skip the "change password on first login" wall for local dev.
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
+      GF_USERS_DEFAULT_THEME: dark
     ports: ["3000:3000"]
+    # Auto-provision the Prometheus data source + the MTS dashboard on startup.
+    # See deploy/docker/grafana/ for the source files.
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on: [prometheus]
 
   mts:

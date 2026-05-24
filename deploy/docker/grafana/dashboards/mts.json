@@ -1,0 +1,171 @@
+{
+  "title": "MTS — Mission Tasking Service",
+  "uid": "mts-main",
+  "schemaVersion": 38,
+  "version": 1,
+  "tags": ["mts"],
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": {"from": "now-30m", "to": "now"},
+  "templating": {"list": []},
+  "annotations": {"list": []},
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Compile success rate (last 30m)",
+      "description": "Share of compile requests that returned READY_FOR_APPROVAL. Healthy: >70% on a clean dataset. Drops mean the model is rejecting or asking for clarification more often — investigate via the violations panel and the rejections/clarifications timeline.",
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {
+          "expr": "sum(increase(mts_compile_requests_total{status=\"READY_FOR_APPROVAL\"}[30m])) / clamp_min(sum(increase(mts_compile_requests_total[30m])), 1)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.4}, {"color": "green", "value": 0.7}]}}}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Compile p95 latency",
+      "description": "95th-percentile end-to-end compile latency. Healthy: <30s for Claude Haiku / Gemini Flash. Spikes usually mean LLM API slowness — cross-check the LLM latency panel.",
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum(rate(mts_compile_duration_seconds_bucket[5m])) by (le))", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 30}, {"color": "red", "value": 60}]}}}
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Avg repair loops",
+      "description": "Average repair iterations per compile. Healthy: <1.0 (most plans valid on first try). Rising trend means the planner is making more safety-violating choices — the model may be drifting or the prompt is no longer aligned. Hard cap is 3 before REJECTED.",
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {"expr": "rate(mts_repair_loops_sum[10m]) / clamp_min(rate(mts_repair_loops_count[10m]), 0.0001)", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1.0}, {"color": "red", "value": 2.0}]}}}
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "LLM error rate (last 30m)",
+      "description": "Share of LLM calls returning rate_limited or error. Healthy: 0%. >0 → likely quota exhaustion or upstream LLM outage. Cross-reference with `mts_llm_calls_total{outcome=\"rate_limited\"}`.",
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {
+          "expr": "sum(increase(mts_llm_calls_total{outcome!=\"ok\"}[30m])) / clamp_min(sum(increase(mts_llm_calls_total[30m])), 1)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.01}, {"color": "red", "value": 0.05}]}}}
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Compile rate by final status",
+      "description": "Requests per second, broken out by status. READY/REJECTED/NEEDS_CLARIFICATION/error. A sudden REJECTED spike often means the safety-kernel is catching real planner regressions; an `error` spike means the LLM provider is failing.",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (status) (rate(mts_compile_requests_total[1m]))", "legendFormat": "{{status}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Compile latency p50/p95/p99",
+      "description": "Three percentiles over 5-minute windows. p50 is typical user experience; p95 is the worst common case; p99 is tail outliers. The gap between p50 and p99 is your variance.",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(mts_compile_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(mts_compile_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "B"},
+        {"expr": "histogram_quantile(0.99, sum(rate(mts_compile_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99", "refId": "C"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "LLM calls per second (by outcome)",
+      "description": "Volume of LLM API calls split by ok/error/rate_limited. Should track 1:1 with compile rate (we make ~1 LLM call per attempt + 1 per repair). Big multiplier means the repair loop is hammering the LLM.",
+      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (outcome) (rate(mts_llm_calls_total[1m]))", "legendFormat": "{{outcome}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "LLM call latency p50/p95",
+      "description": "Single-LLM-call latency. Slower than ~5s p95 means the upstream LLM is under load or the prompt has grown. Most of the compile-latency budget is spent here.",
+      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(mts_llm_duration_seconds_bucket[5m])) by (le, provider, model))", "legendFormat": "p50 {{provider}}/{{model}}", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(mts_llm_duration_seconds_bucket[5m])) by (le, provider, model))", "legendFormat": "p95 {{provider}}/{{model}}", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 9,
+      "type": "bargauge",
+      "title": "Safety-kernel violations (top checks)",
+      "description": "Which safety checks fire most often. Diagnostic: if `sensor_coverage_adequate` dominates, the planner is mislabeling perimeter patrols as SEARCH_PATTERN. If `avoids_nfz` dominates, the planner is ignoring NFZs. If `battery_within_budget` dominates, plans are too ambitious.",
+      "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (check) (increase(mts_validation_violations_total[30m]))", "legendFormat": "{{check}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "options": {"orientation": "horizontal", "displayMode": "gradient"}
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Repair loops distribution (heatmap-ish)",
+      "description": "Histogram quantiles of repair-loop counts. p50=0 = clean planner; p95>1 = chronic struggle; p95=3 = planner failing → most calls REJECTED.",
+      "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(mts_repair_loops_bucket[10m])) by (le))", "legendFormat": "p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(mts_repair_loops_bucket[10m])) by (le))", "legendFormat": "p95", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "min": 0}}
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Plan shape — legs per plan",
+      "description": "Distribution of plan complexity in legs. Most missions are 2–3 legs (work + RTB). A sudden shift to many legs may mean the planner is over-decomposing simple commands.",
+      "gridPos": {"x": 0, "y": 28, "w": 8, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(mts_plan_legs_bucket[10m])) by (le))", "legendFormat": "p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(mts_plan_legs_bucket[10m])) by (le))", "legendFormat": "p95", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none"}}
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Plan shape — estimated battery (%)",
+      "description": "Estimated battery consumption per approved plan. Helpful for tuning the drone profile + understanding mission realism. If p95 hits 80%, the planner is regularly cutting it close to the 20% reserve.",
+      "gridPos": {"x": 8, "y": 28, "w": 8, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(mts_plan_battery_pct_bucket[10m])) by (le))", "legendFormat": "p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(mts_plan_battery_pct_bucket[10m])) by (le))", "legendFormat": "p95", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent"}}
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Plan shape — estimated flight duration",
+      "description": "Estimated wall-clock flight time per approved plan. Useful as a sanity check: a 5-min perimeter patrol shouldn't suddenly become 30-min plans without a reason.",
+      "gridPos": {"x": 16, "y": 28, "w": 8, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(mts_plan_duration_seconds_bucket[10m])) by (le))", "legendFormat": "p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(mts_plan_duration_seconds_bucket[10m])) by (le))", "legendFormat": "p95", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    }
+  ]
+}

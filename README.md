@@ -132,6 +132,11 @@ service to catch LLM regressions that unit tests cannot.
 
 ## Observability
 
+**📖 See [docs/observability.md](docs/observability.md) for the metric
+interpretation guide** — every metric, healthy ranges, what to investigate when
+something moves. The Grafana dashboard is auto-provisioned on
+`docker compose up`; just open <http://localhost:3000>.
+
 Three layers, all required:
 
 - **LangSmith** — every node traversal, tool call I/O, LLM prompt/completion,

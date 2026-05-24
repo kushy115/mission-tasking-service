@@ -1,0 +1,11 @@
+# Auto-provisioned data source — Grafana picks this up on startup.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    # `prometheus` is the service name on the docker-compose network.
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
