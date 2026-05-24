@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir uv
 
 WORKDIR /build
-COPY pyproject.toml ./
+COPY pyproject.toml README.md ./
 COPY app ./app
 RUN uv venv /opt/venv \
     && uv pip install --python /opt/venv/bin/python --no-cache .
