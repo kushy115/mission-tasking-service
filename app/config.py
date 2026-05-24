@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     host: str = Field("0.0.0.0", alias="MTS_HOST")
     port: int = Field(8000, alias="MTS_PORT")
 
-    anthropic_api_key: str = Field("", alias="ANTHROPIC_API_KEY")
+    api_key: str = Field("", alias="API_KEY")
     llm_model: str = Field("claude-sonnet-4-6", alias="MTS_LLM_MODEL")
     llm_temperature: float = Field(0.0, alias="MTS_LLM_TEMPERATURE")
     llm_max_tokens: int = Field(4096, alias="MTS_LLM_MAX_TOKENS")

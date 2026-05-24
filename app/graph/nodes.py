@@ -130,7 +130,7 @@ def _build_planning_agent() -> Any:
         temperature=settings.llm_temperature,
         max_tokens=settings.llm_max_tokens,
         timeout=settings.llm_timeout_s,
-        api_key=settings.anthropic_api_key,
+        api_key=settings.api_key,
     )
     # Model-retry middleware: exponential backoff on transient model errors.
     # Note: content-moderation middleware is available here too; we omit it

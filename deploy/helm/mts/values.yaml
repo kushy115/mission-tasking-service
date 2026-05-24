@@ -54,7 +54,7 @@ config:
 # external secret manager (External Secrets Operator, Vault) rather than hand-
 # editing these.
 secrets:
-  ANTHROPIC_API_KEY: ""
+  API_KEY: ""
   LANGSMITH_API_KEY: ""
   MTS_DATABASE_URL: ""
   MTS_CHECKPOINT_DATABASE_URL: ""
