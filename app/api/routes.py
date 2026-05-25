@@ -20,6 +20,7 @@ from app.geo.store import (
     get_engine,
     list_areas,
     list_drones,
+    list_missions,
     load_drone_profile,
     load_mission,
     set_mission_approval,
@@ -140,6 +141,22 @@ def approve_mission(req: ApprovalRequest) -> ApprovalResponse:
         final_status=final,
         operator_note=req.operator_note,
     )
+
+
+@router.get("/v1/missions")
+def list_missions_endpoint(limit: int = 50) -> list[dict]:
+    """List recent missions (newest first). See docs/DESIGN_DECISIONS.md §1."""
+    limit = max(1, min(int(limit), 200))
+    return list_missions(get_engine(), limit=limit)
+
+
+@router.get("/v1/missions/{mission_id}")
+def get_mission_endpoint(mission_id: str) -> dict:
+    """Return the full stored MissionPlan JSON for one mission."""
+    raw = load_mission(get_engine(), mission_id)
+    if raw is None:
+        raise HTTPException(status_code=404, detail=f"mission {mission_id} not found")
+    return raw
 
 
 @router.post("/v1/missions/{mission_id}:verify", response_model=VerifyResponse)

@@ -242,6 +242,32 @@ def load_mission(engine: Engine, mission_id: str) -> dict | None:
     return row[0] if row else None
 
 
+def list_missions(engine: Engine, limit: int = 50) -> list[dict]:
+    """Lightweight summary of recent missions, newest first. See DESIGN_DECISIONS.md §1."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT mission_id, area_id, status, approved, operator_note, created_at
+                FROM missions ORDER BY created_at DESC LIMIT :lim
+                """
+            ),
+            {"lim": limit},
+        ).all()
+    return [
+        {
+            "mission_id": r[0],
+            "area_id": r[1],
+            "status": r[2],
+            # tri-state: null = never approved, true = approved, false = rejected
+            "approved": r[3],
+            "operator_note": r[4] or "",
+            "created_at": r[5].isoformat() if r[5] else None,
+        }
+        for r in rows
+    ]
+
+
 def geojson_from_polygon(poly: Polygon) -> dict:
     return mapping(poly)
 
