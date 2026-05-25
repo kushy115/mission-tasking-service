@@ -13,6 +13,8 @@
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+  <script defer src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
 
   <style>
     :root {
@@ -335,6 +337,42 @@
     }
     .leaflet-control-zoom a:hover { background: var(--panel-2) !important; }
 
+    /* ---------- area editor ---------- */
+    .editor-toolbar {
+      position: absolute; top: 12px; left: 12px; z-index: 1000;
+      display: flex; gap: 6px; flex-direction: column;
+    }
+    .editor-toolbar .btn {
+      padding: 6px 12px; font-size: 12px;
+    }
+    .editor-panel {
+      position: absolute; top: 12px; right: 12px; z-index: 1000;
+      background: rgba(17, 23, 38, 0.96); backdrop-filter: blur(10px);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 14px; width: 240px; box-shadow: var(--shadow-2);
+      display: none;
+    }
+    .editor-panel.open { display: block; }
+    .editor-panel h3 {
+      margin: 0 0 8px; font-size: 12px; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--muted); font-weight: 600;
+    }
+    .editor-panel .field { margin-bottom: 10px; }
+    .editor-panel .field label { font-size: 11px; }
+    .editor-hint {
+      font-size: 11px; color: var(--muted); line-height: 1.4; margin-bottom: 8px;
+    }
+    .editor-status {
+      font-size: 11px; padding: 6px 8px; border-radius: 4px;
+      background: var(--bg-elev); margin: 6px 0 10px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    /* leaflet.draw dark-mode polish */
+    .leaflet-draw-toolbar a {
+      background-color: var(--panel) !important; border: 1px solid var(--border) !important;
+      filter: invert(0.85);
+    }
+
     /* ---------- history drawer ---------- */
     .drawer {
       position: fixed; top: 0; right: 0; bottom: 0; width: 380px;
@@ -463,6 +501,26 @@
   <section class="right">
     <div class="map-wrap">
       <div id="map"></div>
+      <div class="editor-toolbar">
+        <button id="edit-area-btn" class="btn btn-ghost" title="Draw a new operating area">✎ New area</button>
+      </div>
+      <div class="editor-panel" id="editor-panel">
+        <h3>Area editor</h3>
+        <div class="editor-hint">1. Draw a polygon (boundary).<br>2. Optionally add no-fly polygons.<br>3. Click a point as home base.</div>
+        <div class="field">
+          <label for="new-area-id">Area ID</label>
+          <input type="text" id="new-area-id" placeholder="e.g. north-field" />
+        </div>
+        <div class="field">
+          <label for="new-ceiling">Ceiling (m)</label>
+          <input type="text" id="new-ceiling" value="120" />
+        </div>
+        <div class="editor-status" id="editor-status">no boundary yet</div>
+        <div style="display: flex; gap: 6px;">
+          <button id="save-area-btn" class="btn btn-primary" style="flex:1; padding:7px;">Save</button>
+          <button id="cancel-area-btn" class="btn btn-ghost" style="padding:7px;">Cancel</button>
+        </div>
+      </div>
       <div class="legend">
         <div class="legend-row"><div class="legend-swatch" style="background:#5b9bff;"></div>Boundary</div>
         <div class="legend-row"><div class="legend-swatch" style="background:#ef6764;"></div>No-fly zone</div>
@@ -851,6 +909,112 @@ window.addEventListener('DOMContentLoaded', () => {
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c =>
       ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  }
+
+  // ----- area editor (Leaflet.draw)
+  let editorState = null;  // { drawnItems, draftBoundary, draftNfzs, draftHome, controls }
+  $('edit-area-btn').addEventListener('click', startEditor);
+  $('cancel-area-btn').addEventListener('click', endEditor);
+  $('save-area-btn').addEventListener('click', saveArea);
+
+  function setEditorStatus(text) { $('editor-status').textContent = text; }
+
+  function startEditor() {
+    if (editorState) return;
+    if (areaLayer) map.removeLayer(areaLayer);
+    if (planLayer) { map.removeLayer(planLayer); planLayer = null; }
+
+    const drawnItems = new L.FeatureGroup().addTo(map);
+    const controls = new L.Control.Draw({
+      position: 'topleft',
+      edit: { featureGroup: drawnItems, remove: true },
+      draw: {
+        polygon: { shapeOptions: { color: '#5b9bff', weight: 2 } },
+        polyline: false, rectangle: false, circle: false, circlemarker: false,
+        marker: true,  // used to pick home base
+      },
+    });
+    map.addControl(controls);
+
+    editorState = { drawnItems, draftBoundary: null, draftNfzs: [], draftHome: null, controls };
+    $('editor-panel').classList.add('open');
+    $('edit-area-btn').style.display = 'none';
+    setEditorStatus('draw boundary first');
+
+    map.on(L.Draw.Event.CREATED, onShapeCreated);
+  }
+
+  function onShapeCreated(e) {
+    if (!editorState) return;
+    const layer = e.layer;
+    if (e.layerType === 'polygon') {
+      if (!editorState.draftBoundary) {
+        editorState.draftBoundary = layer;
+        layer.setStyle({ color: '#5b9bff', weight: 2.5, fillOpacity: 0.04 });
+        editorState.drawnItems.addLayer(layer);
+        setEditorStatus('boundary set · add NFZs or click home marker');
+      } else {
+        // subsequent polygons → NFZs
+        layer.setStyle({ color: '#ef6764', weight: 2, fillOpacity: 0.18 });
+        editorState.drawnItems.addLayer(layer);
+        editorState.draftNfzs.push(layer);
+        setEditorStatus(`boundary + ${editorState.draftNfzs.length} NFZ${editorState.draftNfzs.length === 1 ? '' : 's'}`);
+      }
+    } else if (e.layerType === 'marker') {
+      if (editorState.draftHome) editorState.drawnItems.removeLayer(editorState.draftHome);
+      editorState.draftHome = layer;
+      editorState.drawnItems.addLayer(layer);
+      const ll = layer.getLatLng();
+      setEditorStatus(`home set: ${ll.lat.toFixed(5)},${ll.lng.toFixed(5)} (server will snap to boundary)`);
+    }
+  }
+
+  function endEditor() {
+    if (!editorState) return;
+    map.removeLayer(editorState.drawnItems);
+    map.removeControl(editorState.controls);
+    map.off(L.Draw.Event.CREATED, onShapeCreated);
+    editorState = null;
+    $('editor-panel').classList.remove('open');
+    $('edit-area-btn').style.display = '';
+    // restore previous area on the map
+    const a = currentAreas.find(x => x.area_id === areaSel.value) || currentAreas[0];
+    if (a) drawAreaOnMap(a);
+  }
+
+  async function saveArea() {
+    if (!editorState) return;
+    const id = $('new-area-id').value.trim();
+    const ceiling = parseFloat($('new-ceiling').value);
+    if (!id) { setEditorStatus('area ID required'); return; }
+    if (!editorState.draftBoundary) { setEditorStatus('draw a boundary first'); return; }
+    if (!editorState.draftHome) { setEditorStatus('drop a home marker'); return; }
+
+    const body = {
+      area_id: id,
+      ceiling_m: ceiling || 120.0,
+      boundary: editorState.draftBoundary.toGeoJSON().geometry,
+      nfzs: editorState.draftNfzs.map(l => l.toGeoJSON().geometry),
+      home_lon: editorState.draftHome.getLatLng().lng,
+      home_lat: editorState.draftHome.getLatLng().lat,
+    };
+    try {
+      const r = await fetch('/v1/areas', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const resp = await r.json();
+      if (!r.ok) throw new Error(resp.detail || `HTTP ${r.status}`);
+      setEditorStatus(`saved · home snapped to ${resp.home_lat.toFixed(5)},${resp.home_lon.toFixed(5)}`);
+      // reload areas + select the new one
+      await loadAreas();
+      areaSel.value = id;
+      const a = currentAreas.find(x => x.area_id === id);
+      if (a) drawAreaOnMap(a);
+      setTimeout(endEditor, 800);
+    } catch (e) {
+      setEditorStatus('save failed: ' + e.message);
+    }
   }
 
   // ----- history drawer

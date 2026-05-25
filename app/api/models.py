@@ -50,3 +50,22 @@ class VerifyResponse(BaseModel):
     actual_duration_s: float
     actual_battery_pct: float
     deviations: list[str]
+
+
+class AreaUpsertRequest(BaseModel):
+    """Request body for POST /v1/areas — upserts an operating area drawn in the UI."""
+
+    area_id: str = Field(..., min_length=1, max_length=64)
+    boundary: dict = Field(..., description="GeoJSON Polygon")
+    nfzs: list[dict] = Field(default_factory=list, description="GeoJSON Polygons")
+    ceiling_m: float = Field(120.0, gt=0.0, le=500.0)
+    home_lon: float = Field(..., ge=-180.0, le=180.0)
+    home_lat: float = Field(..., ge=-90.0, le=90.0)
+
+
+class AreaUpsertResponse(BaseModel):
+    area_id: str
+    home_lon: float
+    home_lat: float
+    nfz_count: int
+    home_was_snapped: bool

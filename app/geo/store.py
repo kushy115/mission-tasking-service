@@ -14,7 +14,8 @@ import json
 from dataclasses import dataclass
 
 from shapely import wkt
-from shapely.geometry import Polygon, mapping, shape
+from shapely.geometry import LineString, Point, Polygon, mapping, shape
+from shapely.ops import nearest_points
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
@@ -128,6 +129,23 @@ def upsert_area(engine: Engine, area_id: str, geojson: dict, ceiling_m: float) -
                 ),
                 {"aid": area_id, "wkt": poly.wkt},
             )
+
+
+def snap_home_to_boundary(boundary: Polygon, home_lon: float, home_lat: float) -> tuple[float, float]:
+    """Project the user-picked home point onto the nearest point on the polygon
+    exterior. Matches kernel's "home_point is on the boundary" semantics.
+    See docs/DESIGN_DECISIONS.md §5.
+    """
+    p = Point(home_lon, home_lat)
+    boundary_line = LineString(boundary.exterior.coords)
+    snapped, _ = nearest_points(boundary_line, p)
+    return float(snapped.x), float(snapped.y)
+
+
+def delete_area(engine: Engine, area_id: str) -> bool:
+    with engine.begin() as conn:
+        res = conn.execute(text("DELETE FROM areas WHERE area_id = :a"), {"a": area_id})
+    return bool(res.rowcount)
 
 
 def upsert_drone(engine: Engine, profile_id: str, profile_dict: dict) -> None:

@@ -11,6 +11,8 @@ from fastapi.responses import Response
 from sqlalchemy import text
 
 from app.api.models import (
+    AreaUpsertRequest,
+    AreaUpsertResponse,
     ApprovalRequest,
     ApprovalResponse,
     CompileRequest,
@@ -19,6 +21,7 @@ from app.api.models import (
 )
 from app.export import EXPORT_FORMATS, render_export
 from app.geo.store import (
+    delete_area,
     get_engine,
     list_areas,
     list_drones,
@@ -26,6 +29,8 @@ from app.geo.store import (
     load_drone_profile,
     load_mission,
     set_mission_approval,
+    snap_home_to_boundary,
+    upsert_area,
 )
 from app.observability.metrics import (
     CLARIFICATIONS_TOTAL,
@@ -51,6 +56,83 @@ def healthz() -> dict[str, str]:
 def list_areas_endpoint() -> list[dict]:
     """Return all operating areas with boundary + NFZs as GeoJSON. Used by the UI."""
     return list_areas(get_engine())
+
+
+@router.post("/v1/areas", response_model=AreaUpsertResponse)
+def upsert_area_endpoint(req: AreaUpsertRequest) -> AreaUpsertResponse:
+    """Create or replace an operating area drawn in the UI.
+
+    See docs/DESIGN_DECISIONS.md §5: server-side polygon repair + snap-home-to-
+    boundary. Upsert semantics: posting with an existing area_id overwrites.
+    """
+    from shapely.geometry import Point, shape
+
+    try:
+        boundary = shape(req.boundary)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"invalid boundary geometry: {e}") from e
+    if not boundary.is_valid:
+        boundary = boundary.buffer(0)
+    if boundary.is_empty or boundary.geom_type != "Polygon":
+        raise HTTPException(status_code=400, detail="boundary must be a non-empty Polygon")
+
+    nfz_polys = []
+    for i, nfz in enumerate(req.nfzs):
+        try:
+            poly = shape(nfz)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f"nfz[{i}] invalid: {e}") from e
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+        if poly.is_empty or poly.geom_type != "Polygon":
+            raise HTTPException(status_code=400, detail=f"nfz[{i}] must be a non-empty Polygon")
+        if not boundary.contains(poly) and not boundary.intersects(poly):
+            raise HTTPException(
+                status_code=400,
+                detail=f"nfz[{i}] is entirely outside the boundary (unreachable)",
+            )
+        nfz_polys.append(poly)
+
+    home_pt = Point(req.home_lon, req.home_lat)
+    home_was_snapped = not boundary.exterior.distance(home_pt) < 1e-9
+    snapped_lon, snapped_lat = snap_home_to_boundary(boundary, req.home_lon, req.home_lat)
+
+    # Assemble a GeoJSON FeatureCollection that mirrors the seed format so
+    # upsert_area can reuse the same path.
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": boundary.__geo_interface__,
+                "properties": {"role": "boundary", "home": [snapped_lon, snapped_lat]},
+            },
+            *[
+                {
+                    "type": "Feature",
+                    "geometry": poly.__geo_interface__,
+                    "properties": {"role": "nfz"},
+                }
+                for poly in nfz_polys
+            ],
+        ],
+    }
+    upsert_area(get_engine(), req.area_id, fc, req.ceiling_m)
+    return AreaUpsertResponse(
+        area_id=req.area_id,
+        home_lon=snapped_lon,
+        home_lat=snapped_lat,
+        nfz_count=len(nfz_polys),
+        home_was_snapped=home_was_snapped,
+    )
+
+
+@router.delete("/v1/areas/{area_id}")
+def delete_area_endpoint(area_id: str) -> dict[str, Any]:
+    """Hard-delete an operating area. Cascades to its NFZs."""
+    if not delete_area(get_engine(), area_id):
+        raise HTTPException(status_code=404, detail=f"area {area_id} not found")
+    return {"area_id": area_id, "deleted": True}
 
 
 @router.get("/v1/drones")
