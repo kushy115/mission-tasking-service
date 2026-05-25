@@ -39,6 +39,12 @@ class ConstraintReport(BaseModel):
     sensor_coverage_adequate_detail: str = ""
     ends_with_rtb: bool
     ends_with_rtb_detail: str = ""
+    # Weather and deconfliction are optional checks: True by default so old
+    # records without those fields still appear satisfied.
+    weather_acceptable: bool = True
+    weather_acceptable_detail: str = "not evaluated"
+    airspace_deconflicted: bool = True
+    airspace_deconflicted_detail: str = "not evaluated"
 
     @property
     def all_satisfied(self) -> bool:
@@ -49,6 +55,8 @@ class ConstraintReport(BaseModel):
             and self.within_endurance
             and self.sensor_coverage_adequate
             and self.ends_with_rtb
+            and self.weather_acceptable
+            and self.airspace_deconflicted
         )
 
 

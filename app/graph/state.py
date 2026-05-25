@@ -22,6 +22,7 @@ class CompileState(TypedDict, total=False):
     drone_state: dict[str, Any]
     request_id: str | None
     geo_context: dict[str, Any]  # boundary, nfzs, ceiling, home — serialized
+    weather: dict[str, Any] | None  # WeatherObservation dict; see weather/provider.py
     draft_plan: dict[str, Any] | None
     validation_errors: list[str]
     constraints_report: dict[str, Any] | None
@@ -29,4 +30,8 @@ class CompileState(TypedDict, total=False):
     status: str
     clarification_questions: list[str]
     rejection_reasons: list[str]
+    confidence_score: float | None  # set by critique node; see DESIGN_DECISIONS §6
+    critique_notes: str
+    alternatives: list[dict[str, Any]]  # extra plans; see DESIGN_DECISIONS §7
+    primary_idx: int
     messages: Annotated[list, add_messages]

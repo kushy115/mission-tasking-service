@@ -752,6 +752,16 @@ window.addEventListener('DOMContentLoaded', () => {
       </div>`;
     }
 
+    // Weather (if the constraints report carries the detail string).
+    const wxDetail = p.constraints_satisfied?.weather_acceptable_detail;
+    if (wxDetail && wxDetail !== 'not evaluated') {
+      const wxOk = p.constraints_satisfied?.weather_acceptable;
+      html += `<div class="section">
+        <div class="section-title">Weather <span style="color: ${wxOk ? 'var(--ok)' : 'var(--err)'};">${wxOk ? '✓' : '⚠'}</span></div>
+        <div class="reasoning" style="border-left-color: ${wxOk ? 'var(--ok)' : 'var(--err)'};">${escapeHtml(wxDetail)}</div>
+      </div>`;
+    }
+
     if (p.rejection_reasons && p.rejection_reasons.length) {
       html += `<div class="section">
         <div class="section-title" style="color: var(--err);">Why it was rejected</div>

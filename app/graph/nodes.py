@@ -33,6 +33,7 @@ from app.schemas.enums import MissionStatus
 from app.schemas.plan import MissionPlan
 from app.tools.planning_tools import PLANNING_TOOLS
 from app.validation.kernel import validate_plan
+from app.weather import get_weather_for_area
 
 log = logging.getLogger(__name__)
 
@@ -88,8 +89,23 @@ def intake_node(state: CompileState) -> dict[str, Any]:  # noqa: D401
             "rejection_reasons": ["insufficient operator clearance"],
         }
 
+    # Fetch weather once per compile (cached for 10 min in the provider layer).
+    # Failures fall back to synthetic — never blocks intake.
+    weather_obs = get_weather_for_area(geo.home_point[1], geo.home_point[0])
+    weather_dict = {
+        "wind_mps": weather_obs.wind_mps,
+        "gust_mps": weather_obs.gust_mps,
+        "wind_dir_deg": weather_obs.wind_dir_deg,
+        "visibility_m": weather_obs.visibility_m,
+        "precipitation_mmh": weather_obs.precipitation_mmh,
+        "temperature_c": weather_obs.temperature_c,
+        "source": weather_obs.source,
+        "summary": weather_obs.summary_for_prompt(),
+    }
+
     return {
         "geo_context": geo_serialized,
+        "weather": weather_dict,
         "repair_attempts": 0,
     }
 
@@ -278,6 +294,14 @@ def plan_node(state: CompileState) -> dict[str, Any]:
         f"  altitude_ceiling_m:                 {geo['altitude_ceiling_m']}",
         f"  home_lon, home_lat:                 {geo['home_lon']}, {geo['home_lat']}",
     ]
+    wx = state.get("weather")
+    if wx:
+        user_msg_parts.append(f"WEATHER: {wx.get('summary', '')}")
+        user_msg_parts.append(
+            "  Consider weather when choosing sensor (low visibility favors IR), "
+            "orienting search patterns (cross-wind sweeps lose more battery), "
+            "and selecting altitudes (higher altitudes feel stronger winds)."
+        )
     if repair_attempts > 0 and errors:
         user_msg_parts.append(
             "\nREPAIR PASS — the deterministic safety kernel rejected your previous "
@@ -361,7 +385,22 @@ def validate_node(state: CompileState) -> dict[str, Any]:
     profile = load_drone_profile(engine, drone_id)
     starting_pct = float(state["drone_state"].get("battery_pct", 100.0))
 
-    violations, report = validate_plan(plan, geo, profile, starting_battery_pct=starting_pct)
+    # Re-hydrate the weather observation captured in intake (so cost doesn't
+    # double-bill per repair attempt) and feed it through the kernel.
+    weather_obs = None
+    wx = state.get("weather")
+    if wx:
+        from app.weather import WeatherObservation
+        weather_obs = WeatherObservation(
+            wind_mps=wx["wind_mps"], gust_mps=wx["gust_mps"],
+            wind_dir_deg=wx["wind_dir_deg"], visibility_m=wx["visibility_m"],
+            precipitation_mmh=wx["precipitation_mmh"], temperature_c=wx["temperature_c"],
+            source=wx.get("source", "cached"),
+        )
+
+    violations, report = validate_plan(
+        plan, geo, profile, starting_battery_pct=starting_pct, weather=weather_obs,
+    )
 
     # Record each FAILED check so the dashboard can show which safety checks
     # trip most often (e.g. coverage-gap dominates → planner's pattern logic
@@ -373,6 +412,8 @@ def validate_node(state: CompileState) -> dict[str, Any]:
         "within_endurance",
         "sensor_coverage_adequate",
         "ends_with_rtb",
+        "weather_acceptable",
+        "airspace_deconflicted",
     ):
         if not getattr(report, check_name):
             VALIDATION_VIOLATIONS.labels(check_name).inc()

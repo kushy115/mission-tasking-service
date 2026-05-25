@@ -29,6 +29,7 @@ from app.validation.physics import (
     estimate_mission,
     sensor_swath_m,
 )
+from app.weather import WeatherObservation
 
 
 @dataclass(frozen=True)
@@ -90,14 +91,21 @@ def _altitude_ok(
 
 
 def _battery_ok(
-    plan: MissionPlan, profile: DroneProfile, reserve_min_pct: float, starting_pct: float
+    plan: MissionPlan,
+    profile: DroneProfile,
+    reserve_min_pct: float,
+    starting_pct: float,
+    *,
+    wind_mps: float = 0.0,
+    wind_coeff: float = 0.0,
 ) -> tuple[bool, str, float, float]:
-    energy = estimate_mission(plan.legs, profile)
+    energy = estimate_mission(plan.legs, profile, wind_mps=wind_mps, wind_coeff=wind_coeff)
     reserve_pct = starting_pct - energy.total_battery_pct
     ok = reserve_pct >= reserve_min_pct
+    wind_note = f"; wind_penalty=+{wind_coeff * wind_mps * 100:.1f}% power" if wind_mps > 0 else ""
     detail = (
         f"estimated_use={energy.total_battery_pct:.1f}%; "
-        f"reserve={reserve_pct:.1f}% (min {reserve_min_pct}%)"
+        f"reserve={reserve_pct:.1f}% (min {reserve_min_pct}%){wind_note}"
     )
     return ok, detail, energy.total_battery_pct, reserve_pct
 
@@ -164,13 +172,50 @@ def _ends_with_rtb(plan: MissionPlan) -> tuple[bool, str]:
     return True, "ok"
 
 
+def _weather_ok(plan: MissionPlan, obs: WeatherObservation) -> tuple[bool, list[str], str]:
+    """Hard reject conditions only (see DESIGN_DECISIONS.md §4). Anything below
+    these thresholds is just a battery penalty in the physics model."""
+    settings = get_settings()
+    bad: list[str] = []
+    if obs.wind_mps > settings.weather_max_wind_mps:
+        bad.append(
+            f"sustained wind {obs.wind_mps:.1f} m/s exceeds drone tolerance "
+            f"{settings.weather_max_wind_mps:.1f} m/s"
+        )
+    if obs.gust_mps > settings.weather_max_gust_mps:
+        bad.append(
+            f"wind gusts {obs.gust_mps:.1f} m/s exceed drone tolerance "
+            f"{settings.weather_max_gust_mps:.1f} m/s"
+        )
+    if obs.precipitation_mmh > settings.weather_max_precip_mmh:
+        bad.append(
+            f"precipitation {obs.precipitation_mmh:.1f} mm/h exceeds limit "
+            f"{settings.weather_max_precip_mmh:.1f} mm/h (drone not waterproof)"
+        )
+    if obs.visibility_m < settings.weather_min_visibility_m:
+        uses_eo = any(leg.sensor_mode == SensorMode.EO for leg in plan.legs)
+        if uses_eo:
+            bad.append(
+                f"visibility {obs.visibility_m:.0f}m below {settings.weather_min_visibility_m:.0f}m "
+                "and plan uses EO sensor (switch to IR or wait)"
+            )
+    detail = obs.summary_for_prompt() if not bad else "; ".join(bad)
+    return (not bad, bad, detail)
+
+
 def validate_plan(
     plan: MissionPlan,
     geo: GeoContext,
     profile: DroneProfile,
     starting_battery_pct: float = 100.0,
+    weather: WeatherObservation | None = None,
+    deconfliction: tuple[bool, list[str]] | None = None,
 ) -> tuple[list[str], ConstraintReport]:
-    """Run every safety check. Returns (violations, structured report)."""
+    """Run every safety check. Returns (violations, structured report).
+
+    `weather` and `deconfliction` are optional; when not supplied those checks
+    pass trivially. See docs/DESIGN_DECISIONS.md §4 and §8.
+    """
     settings = get_settings()
     violations: list[str] = []
 
@@ -183,8 +228,12 @@ def validate_plan(
     alt_ok, alt_bad = _altitude_ok(geo.altitude_ceiling_m, settings.min_agl_m, plan)
     violations.extend(alt_bad)
 
+    # Wind penalty propagates into the energy estimate when weather is supplied.
+    wind_mps = weather.wind_mps if weather is not None else 0.0
+    wind_coeff = settings.weather_wind_power_coeff if weather is not None else 0.0
     batt_ok, batt_detail, batt_used, batt_reserve = _battery_ok(
-        plan, profile, settings.battery_reserve_min_pct, starting_battery_pct
+        plan, profile, settings.battery_reserve_min_pct, starting_battery_pct,
+        wind_mps=wind_mps, wind_coeff=wind_coeff,
     )
     if not batt_ok:
         violations.append(batt_detail)
@@ -200,6 +249,19 @@ def validate_plan(
     if not rtb_ok:
         violations.append(rtb_detail)
 
+    if weather is not None:
+        wx_ok, wx_bad, wx_detail = _weather_ok(plan, weather)
+        violations.extend(wx_bad)
+    else:
+        wx_ok, wx_detail = True, "not evaluated"
+
+    if deconfliction is not None:
+        dec_ok, dec_bad = deconfliction
+        violations.extend(dec_bad)
+        dec_detail = "; ".join(dec_bad) if dec_bad else "ok"
+    else:
+        dec_ok, dec_detail = True, "not evaluated"
+
     report = ConstraintReport(
         inside_geofence=geo_ok,
         inside_geofence_detail="; ".join(geo_bad) if geo_bad else "ok",
@@ -213,10 +275,14 @@ def validate_plan(
         sensor_coverage_adequate_detail="; ".join(cov_bad) if cov_bad else "ok",
         ends_with_rtb=rtb_ok,
         ends_with_rtb_detail=rtb_detail,
+        weather_acceptable=wx_ok,
+        weather_acceptable_detail=wx_detail,
+        airspace_deconflicted=dec_ok,
+        airspace_deconflicted_detail=dec_detail,
     )
 
     # Stamp aggregate fields back on the plan for downstream consumers.
-    energy = estimate_mission(plan.legs, profile)
+    energy = estimate_mission(plan.legs, profile, wind_mps=wind_mps, wind_coeff=wind_coeff)
     plan.total_duration_s = energy.total_duration_s
     plan.total_battery_pct = energy.total_battery_pct
     plan.battery_reserve_pct = max(0.0, starting_battery_pct - energy.total_battery_pct)
