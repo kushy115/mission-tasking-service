@@ -810,6 +810,21 @@ window.addEventListener('DOMContentLoaded', () => {
       </div>`;
     }
 
+    // LLM critique (advisory, see DESIGN_DECISIONS.md §6).
+    if (p.confidence_score !== null && p.confidence_score !== undefined) {
+      const s = p.confidence_score;
+      const cls = s >= 0.8 ? 'ok' : (s >= 0.5 ? 'warn' : 'err');
+      const colorVar = { ok: 'var(--ok)', warn: 'var(--warn)', err: 'var(--err)' }[cls];
+      const pct = Math.round(s * 100);
+      html += `<div class="section">
+        <div class="section-title">Tactical critique <span style="color:${colorVar}">${pct}%</span></div>
+        <div style="background: var(--bg-elev); height: 6px; border-radius: 3px; overflow: hidden; margin: 4px 0 8px;">
+          <div style="width: ${pct}%; height: 100%; background: ${colorVar};"></div>
+        </div>
+        <div class="reasoning" style="border-left-color: ${colorVar};">${escapeHtml(p.critique_notes || '(no notes)')}</div>
+      </div>`;
+    }
+
     // Weather (if the constraints report carries the detail string).
     const wxDetail = p.constraints_satisfied?.weather_acceptable_detail;
     if (wxDetail && wxDetail !== 'not evaluated') {

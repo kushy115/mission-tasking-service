@@ -79,3 +79,6 @@ class MissionPlan(BaseModel):
     reasoning_trace: str = ""
     clarification_questions: list[str] = Field(default_factory=list)
     rejection_reasons: list[str] = Field(default_factory=list)
+    # Advisory critique (LLM, see DESIGN_DECISIONS.md §6). None = not run.
+    confidence_score: float | None = None
+    critique_notes: str = ""

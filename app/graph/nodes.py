@@ -425,6 +425,89 @@ def validate_node(state: CompileState) -> dict[str, Any]:
     }
 
 
+# ---- critique --------------------------------------------------------------
+#
+# See docs/DESIGN_DECISIONS.md §6. A second LLM call after validation succeeds.
+# Output is advisory only — failure to critique never blocks approval. Skipped
+# for REJECTED / NEEDS_CLARIFICATION plans where there's nothing to evaluate.
+
+_CRITIQUE_SYSTEM_PROMPT = """You are a senior drone operator critiquing a
+proposed mission plan that has already passed the safety kernel.
+
+Evaluate the plan on TACTICAL QUALITY — not safety, which is already verified.
+Consider:
+  - Is the search pattern oriented sensibly given the wind direction (sweeping
+    cross-wind is less efficient)?
+  - Is the sensor choice right for the visibility conditions?
+  - Are loiter points placed where they'll see what the operator asked for?
+  - Are altitudes high enough for situational awareness, low enough for sensor
+    resolution?
+  - Does the leg ordering minimize backtracking?
+
+Reply with a single JSON object — no prose, no markdown:
+  {
+    "confidence_score": <float 0.0–1.0>,
+    "critique_notes": "<one or two sentences explaining the score>"
+  }
+
+Score guide:
+  0.8–1.0 = solid, no obvious tactical issues
+  0.5–0.8 = workable but some improvement possible
+  0.0–0.5 = the plan is legal but tactically questionable
+"""
+
+
+def critique_node(state: CompileState) -> dict[str, Any]:
+    """Advisory second-pass LLM critique. Never blocks. See DESIGN_DECISIONS §6."""
+    log.info("→ critique")
+    raw = state.get("draft_plan") or {}
+    plan_status = raw.get("status")
+    # Only run on plans that actually flew through the planner.
+    if plan_status in (MissionStatus.NEEDS_CLARIFICATION.value, MissionStatus.REJECTED.value):
+        return {}
+    if not raw.get("legs"):
+        return {}
+
+    settings = get_settings()
+    if not settings.api_key:
+        # No LLM available; degrade gracefully (we still return the plan).
+        log.info("critique skipped: no API key configured")
+        return {"confidence_score": None, "critique_notes": "critique skipped (no LLM available)"}
+
+    llm = _llm_lazy()
+    wx = state.get("weather") or {}
+    user_msg = (
+        f"PLAN (already passed safety kernel):\n{json.dumps(raw, indent=2)[:6000]}\n\n"
+        f"WEATHER: {wx.get('summary', 'unknown')}\n"
+        f"OPERATOR COMMAND: {state.get('raw_command', '')}\n"
+    )
+    start = time.perf_counter()
+    provider, model = settings.llm_provider, settings.llm_model
+    try:
+        ai_msg = llm.invoke([
+            {"role": "system", "content": _CRITIQUE_SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ])
+    except Exception as e:  # noqa: BLE001
+        log.warning("critique LLM call failed: %s — continuing without it", e)
+        LLM_CALLS_TOTAL.labels(provider, model, "error").inc()
+        LLM_DURATION.labels(provider, model).observe(time.perf_counter() - start)
+        return {"confidence_score": None, "critique_notes": f"critique unavailable: {type(e).__name__}"}
+    LLM_CALLS_TOTAL.labels(provider, model, "ok").inc()
+    LLM_DURATION.labels(provider, model).observe(time.perf_counter() - start)
+
+    text = ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
+    try:
+        payload = json.loads(_strip_to_json(text))
+        score = float(payload.get("confidence_score") or 0.0)
+        score = max(0.0, min(1.0, score))
+        notes = str(payload.get("critique_notes") or "").strip()[:500]
+    except Exception as e:  # noqa: BLE001
+        log.warning("critique JSON parse failed: %s; raw: %r", e, text[:200])
+        return {"confidence_score": None, "critique_notes": "critique parse error"}
+    return {"confidence_score": score, "critique_notes": notes}
+
+
 # ---- repair / clarify -------------------------------------------------------
 
 
@@ -499,6 +582,12 @@ def finalize_node(state: CompileState) -> dict[str, Any]:  # noqa: D401
         plan.rejection_reasons = ["no plan produced"]
     else:
         plan.status = MissionStatus.READY_FOR_APPROVAL
+
+    # Stamp critique fields (if any) onto the plan for the response/UI.
+    if "confidence_score" in state:
+        plan.confidence_score = state.get("confidence_score")
+    if state.get("critique_notes"):
+        plan.critique_notes = state["critique_notes"]
 
     # Record plan-shape metrics only for plans that actually flew through the
     # planner (skip NEEDS_CLARIFICATION/REJECTED-from-intake — those have no
