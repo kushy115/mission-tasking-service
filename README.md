@@ -61,14 +61,37 @@ See `docs/graph.mmd` for the LangGraph diagram.
 ## Endpoints
 
 
-| Method | Path                               | Purpose                        |
-| ------ | ---------------------------------- | ------------------------------ |
-| GET    | `/healthz`                         | Liveness                       |
-| GET    | `/readyz`                          | Readiness (checks Postgres)    |
-| GET    | `/metrics`                         | Prometheus scrape              |
-| POST   | `/v1/missions:compile`             | Compile a command into a plan  |
-| POST   | `/v1/missions:approve`             | Approve or reject a ready plan |
-| POST   | `/v1/missions/{mission_id}:verify` | Run the executor over a plan   |
+| Method | Path                                       | Purpose                                      |
+| ------ | ------------------------------------------ | -------------------------------------------- |
+| GET    | `/healthz`                                 | Liveness                                     |
+| GET    | `/readyz`                                  | Readiness (checks Postgres)                  |
+| GET    | `/metrics`                                 | Prometheus scrape                            |
+| POST   | `/v1/missions:compile`                     | Compile a command into a plan                |
+| POST   | `/v1/missions:approve`                     | Approve or reject a ready plan               |
+| POST   | `/v1/missions/{mission_id}:verify`         | Run the executor over a plan                 |
+| GET    | `/v1/missions`                             | List recent missions (history)               |
+| GET    | `/v1/missions/{mission_id}`                | Fetch one mission's full plan                |
+| GET    | `/v1/missions/{mission_id}/export`         | Export as `?format=kml\|gpx\|dji`             |
+| GET    | `/v1/areas`                                | List operating areas                         |
+| POST   | `/v1/areas`                                | Upsert an area drawn in the UI               |
+| DELETE | `/v1/areas/{area_id}`                      | Delete an operating area                     |
+| GET    | `/v1/drones`                               | List drone profiles                          |
+| WS     | `/ws/missions/{mission_id}/sim`            | Live telemetry stream (`?speed=N` time-comp) |
+
+## Extended features
+
+See `docs/DESIGN_DECISIONS.md` for the full rationale per feature. Quick map:
+
+- **Mission history browser** (§1) — side drawer in the UI; click to reload any past mission.
+- **KML / GPX / DJI export** (§2) — download a plan in real GCS formats.
+- **Constraint violation overlay** (§3) — rejected plans color-code waypoints on the map by severity.
+- **Weather integration** (§4) — Open-Meteo provider (no API key), wind power penalty in physics, hard reject on wind/visibility/precipitation thresholds.
+- **Area editor** (§5) — sketch new boundaries + NFZs with Leaflet.draw, server-snaps the home point.
+- **LLM plan critique** (§6) — second LLM call after validation passes, returns a tactical confidence score (advisory only).
+- **Alternative plans** (§7) — opt-in `alternatives:true` returns 2–3 plans for operator choice; each runs through the kernel independently.
+- **Airspace deconfliction** (§8) — 7th safety check: rejects plans that conflict with already-approved missions (lateral buffer + altitude band overlap).
+- **Multi-drone coordination** (§9) — pass `drone_ids: [...]` to compile a group with server-assigned altitude layers (40/70/100m) and 30s takeoff staggers.
+- **Live simulation WebSocket** (§10) — animated drone marker flies the plan in real time with 10× compression; geofence breach auto-aborts.
 
 
 ## Local development
