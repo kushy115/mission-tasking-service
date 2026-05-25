@@ -32,6 +32,7 @@ from app.graph.state import CompileState
 from app.schemas.enums import MissionStatus
 from app.schemas.plan import MissionPlan
 from app.tools.planning_tools import PLANNING_TOOLS
+from app.validation.deconfliction import deconfliction_check
 from app.validation.kernel import validate_plan
 from app.weather import get_weather_for_area
 
@@ -435,7 +436,18 @@ def validate_node(state: CompileState) -> dict[str, Any]:
             source=wx.get("source", "cached"),
         )
 
+    # Airspace deconfliction: compare against approved missions in the same
+    # area within the active window. See DESIGN_DECISIONS §8. The state can
+    # carry a precomputed value for the multi-drone group case where siblings
+    # haven't been persisted yet.
     deconfliction = state.get("_deconfliction")
+    if deconfliction is None:
+        try:
+            deconfliction = deconfliction_check(engine, plan, self_mission_id=plan.mission_id)
+        except Exception as e:  # noqa: BLE001
+            log.warning("deconfliction check failed: %s", e)
+            deconfliction = (True, [])
+
     violations, report = validate_plan(
         plan, geo, profile, starting_battery_pct=starting_pct, weather=weather_obs,
         deconfliction=deconfliction,
