@@ -470,6 +470,11 @@
         <div class="legend-row"><div class="legend-swatch" style="background:#5b9bff;"></div>Transit / RTB</div>
         <div class="legend-row"><div class="legend-swatch" style="background:#a78bfa;"></div>Search pattern</div>
         <div class="legend-row"><div class="legend-swatch" style="background:#f5c463;"></div>Loiter / sensor</div>
+        <div class="legend-row" style="margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border);">
+          <div class="legend-dot" style="background:#ef6764;"></div>Hard violation
+        </div>
+        <div class="legend-row"><div class="legend-dot" style="background:#f5a35b;"></div>Envelope (alt/coverage)</div>
+        <div class="legend-row"><div class="legend-dot" style="background:#f5c463;"></div>Resource (battery)</div>
       </div>
     </div>
     <div id="result" class="result">
@@ -569,8 +574,41 @@ window.addEventListener('DOMContentLoaded', () => {
     map.fitBounds(L.geoJSON(area.boundary).getBounds(), { padding: [40, 40] });
   }
 
+  // ----- violation parser
+  //
+  // The kernel emits strings of known shape; we reshape them into per-waypoint
+  // and per-leg severity tags so the map can highlight what failed. The
+  // kernel's tests guard the string format — if it changes, update this regex.
+  function parseViolations(violations) {
+    const wp = {};  // key "li:wi" → severity ('hard' | 'envelope' | 'resource')
+    const leg = {}; // key "li" → severity
+    const wpRe = /^leg\[(\d+)\]\.waypoint\[(\d+)\]/;
+    const legRe = /^leg\[(\d+)\]/;
+    (violations || []).forEach(v => {
+      let sev = 'resource';
+      if (/outside geofence|no-fly-zone|intersects/i.test(v)) sev = 'hard';
+      else if (/alt |ceiling|min AGL|coverage gap|sensor swath|track spacing|SEARCH_PATTERN/i.test(v)) sev = 'envelope';
+      else if (/duration|endurance|reserve|battery|estimated_use/i.test(v)) sev = 'resource';
+      const wm = v.match(wpRe);
+      if (wm) {
+        const k = `${wm[1]}:${wm[2]}`;
+        wp[k] = _worseSeverity(wp[k], sev);
+      } else {
+        const lm = v.match(legRe);
+        if (lm) leg[lm[1]] = _worseSeverity(leg[lm[1]], sev);
+      }
+    });
+    return { wp, leg };
+  }
+  function _worseSeverity(a, b) {
+    const rank = { hard: 3, envelope: 2, resource: 1 };
+    if (!a) return b;
+    return rank[b] > rank[a] ? b : a;
+  }
+  const SEVERITY_COLOR = { hard: '#ef6764', envelope: '#f5a35b', resource: '#f5c463' };
+
   // ----- draw plan
-  function drawPlanOnMap(plan) {
+  function drawPlanOnMap(plan, violations) {
     if (planLayer) map.removeLayer(planLayer);
     if (!plan.legs || !plan.legs.length) return;
     const legColors = {
@@ -580,23 +618,45 @@ window.addEventListener('DOMContentLoaded', () => {
       SENSOR_TASK: '#f5c463',
       RETURN_TO_BASE: '#4ade80'
     };
+    const vio = parseViolations(violations);
     const layers = [];
     let wpCount = 0;
     plan.legs.forEach((leg, li) => {
       const pts = leg.geometry.map(w => [w.lat, w.lon]);
-      const col = legColors[leg.leg_type] || '#fff';
+      const legSev = vio.leg[String(li)];
+      const baseCol = legColors[leg.leg_type] || '#fff';
+      const col = legSev ? SEVERITY_COLOR[legSev] : baseCol;
+      const dash = legSev ? '6,5' : null;
       if (pts.length >= 2) {
         // Glow effect: two stacked polylines
         layers.push(L.polyline(pts, { color: col, weight: 7, opacity: 0.18 }));
-        layers.push(L.polyline(pts, { color: col, weight: 3, opacity: 0.95 })
-          .bindTooltip(`Leg ${li+1}: ${leg.leg_type}${leg.sensor_mode && leg.sensor_mode !== 'OFF' ? ' · ' + leg.sensor_mode : ''}`,
-                       { sticky: true }));
+        const inner = L.polyline(pts, { color: col, weight: 3, opacity: 0.95, dashArray: dash });
+        const tip = `Leg ${li+1}: ${leg.leg_type}` +
+          (leg.sensor_mode && leg.sensor_mode !== 'OFF' ? ' · ' + leg.sensor_mode : '') +
+          (legSev ? `<br><span style="color:${SEVERITY_COLOR[legSev]};">⚠ ${legSev} violation</span>` : '');
+        inner.bindTooltip(tip, { sticky: true });
+        layers.push(inner);
       }
-      leg.geometry.forEach((w) => {
+      leg.geometry.forEach((w, wi) => {
         wpCount++;
-        layers.push(L.circleMarker([w.lat, w.lon], {
-          radius: 4.5, color: col, fillColor: '#0a0e17', fillOpacity: 1, weight: 2
-        }).bindTooltip(`Waypoint ${wpCount} · ${w.alt_m.toFixed(0)}m AGL`, { sticky: true }));
+        const wpSev = vio.wp[`${li}:${wi}`];
+        const wpCol = wpSev ? SEVERITY_COLOR[wpSev] : baseCol;
+        const radius = wpSev ? 6.5 : 4.5;
+        const tipBase = `Waypoint ${wpCount} · ${w.alt_m.toFixed(0)}m AGL`;
+        const tip = wpSev
+          ? `${tipBase}<br><span style="color:${SEVERITY_COLOR[wpSev]};">⚠ ${wpSev} violation</span>`
+          : tipBase;
+        const marker = L.circleMarker([w.lat, w.lon], {
+          radius, color: wpCol, fillColor: '#0a0e17', fillOpacity: 1,
+          weight: wpSev ? 3 : 2,
+        }).bindTooltip(tip, { sticky: true });
+        if (wpSev === 'hard') {
+          // Add a pulsing halo for hard breaches so they pop visually.
+          layers.push(L.circleMarker([w.lat, w.lon], {
+            radius: 13, color: wpCol, fillOpacity: 0, weight: 1, opacity: 0.4, dashArray: '3,3',
+          }));
+        }
+        layers.push(marker);
       });
     });
     planLayer = L.layerGroup(layers).addTo(map);
@@ -629,7 +689,9 @@ window.addEventListener('DOMContentLoaded', () => {
       if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
       currentPlan = body.plan;
       renderResult(body);
-      drawPlanOnMap(body.plan);
+      // Rejection reasons carry the kernel's violation strings on rejected
+      // plans; pass them so the map highlights the offending waypoints.
+      drawPlanOnMap(body.plan, body.plan.rejection_reasons || []);
     } catch (e) {
       resultEl.innerHTML = `
         <div class="status-bar">
@@ -842,7 +904,7 @@ window.addEventListener('DOMContentLoaded', () => {
       }
       currentPlan = plan;
       renderResult({ plan, repair_loops: 0 });
-      drawPlanOnMap(plan);
+      drawPlanOnMap(plan, plan.rejection_reasons || []);
       drawer.classList.remove('open');
       drawer.setAttribute('aria-hidden', 'true');
     } catch (e) {
