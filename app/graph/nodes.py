@@ -302,6 +302,25 @@ def plan_node(state: CompileState) -> dict[str, Any]:
             "orienting search patterns (cross-wind sweeps lose more battery), "
             "and selecting altitudes (higher altitudes feel stronger winds)."
         )
+    # Multi-drone group context: planner is told which slot/layer it occupies.
+    md = state.get("multi_drone_slot")
+    if md:
+        user_msg_parts.append(
+            f"\nMULTI-DRONE GROUP — you are planning drone {md['index']+1} of "
+            f"{md['total']}. Your assigned altitude band is "
+            f"{md['alt_min']:.0f}–{md['alt_max']:.0f}m. Siblings are on bands: "
+            f"{md['sibling_bands']}. Stagger your first leg's est_duration_s by "
+            f"{md['takeoff_offset_s']:.0f}s so the group doesn't collide at home."
+        )
+    if state.get("alternatives_requested"):
+        user_msg_parts.append(
+            "\nALTERNATIVES MODE — produce 2 or 3 alternative plans (e.g. a "
+            "conservative-battery one, an aggressive-coverage one, a different "
+            "search orientation). Return ONE JSON object with shape "
+            '{"plans": [<plan>, <plan>, ...], "primary_idx": <int>}. Each '
+            "<plan> matches the MissionPlan schema. Pick primary_idx for the "
+            "one you most recommend."
+        )
     if repair_attempts > 0 and errors:
         user_msg_parts.append(
             "\nREPAIR PASS — the deterministic safety kernel rejected your previous "
@@ -344,6 +363,20 @@ def plan_node(state: CompileState) -> dict[str, Any]:
             "validation_errors": [f"plan was not valid JSON: {e}"],
         }
 
+    # Alternatives mode: payload is {"plans": [...], "primary_idx": N}.
+    # We pick the primary as the draft_plan; the rest are stashed for the
+    # validate node to filter and stamp on the final response.
+    raw_alternatives: list[dict] = []
+    if isinstance(payload, dict) and "plans" in payload and isinstance(payload["plans"], list):
+        plans = payload["plans"]
+        if not plans:
+            return {"draft_plan": None, "validation_errors": ["alternatives list was empty"]}
+        primary_idx = int(payload.get("primary_idx") or 0)
+        primary_idx = max(0, min(primary_idx, len(plans) - 1))
+        primary = plans[primary_idx]
+        raw_alternatives = [p for i, p in enumerate(plans) if i != primary_idx]
+        payload = primary
+
     payload.setdefault("mission_id", str(uuid.uuid4()))
     payload["area_id"] = state["area_id"]
 
@@ -355,7 +388,11 @@ def plan_node(state: CompileState) -> dict[str, Any]:
             "draft_plan": None,
             "validation_errors": [f"plan failed schema: {e}"],
         }
-    return {"draft_plan": structured.model_dump()}
+    out = {"draft_plan": structured.model_dump()}
+    if raw_alternatives:
+        # Stash raw alternative dicts; validate_node will filter and convert.
+        out["alternatives"] = raw_alternatives
+    return out
 
 
 # ---- validate ---------------------------------------------------------------
@@ -398,9 +435,33 @@ def validate_node(state: CompileState) -> dict[str, Any]:
             source=wx.get("source", "cached"),
         )
 
+    deconfliction = state.get("_deconfliction")
     violations, report = validate_plan(
         plan, geo, profile, starting_battery_pct=starting_pct, weather=weather_obs,
+        deconfliction=deconfliction,
     )
+
+    # Filter alternatives independently: each must pass the kernel; violators
+    # are dropped silently (operator never sees an unsafe "choice"). Repair
+    # loop applies only to the primary plan. See DESIGN_DECISIONS §7.
+    raw_alts = state.get("alternatives") or []
+    accepted_alts: list[dict] = []
+    for i, raw in enumerate(raw_alts):
+        try:
+            raw.setdefault("mission_id", f"{plan.mission_id}-alt{i+1}")
+            raw["area_id"] = state["area_id"]
+            alt_plan = MissionPlan.model_validate(raw)
+        except Exception as e:  # noqa: BLE001
+            log.info("dropping alternative %d: schema failure (%s)", i, e)
+            continue
+        alt_vios, _alt_report = validate_plan(
+            alt_plan, geo, profile, starting_battery_pct=starting_pct,
+            weather=weather_obs, deconfliction=deconfliction,
+        )
+        if alt_vios:
+            log.info("dropping alternative %d: %d violations", i, len(alt_vios))
+            continue
+        accepted_alts.append(alt_plan.model_dump())
 
     # Record each FAILED check so the dashboard can show which safety checks
     # trip most often (e.g. coverage-gap dominates → planner's pattern logic
@@ -422,6 +483,7 @@ def validate_node(state: CompileState) -> dict[str, Any]:
         "draft_plan": plan.model_dump(),
         "validation_errors": violations,
         "constraints_report": report.model_dump(),
+        "alternatives": accepted_alts,
     }
 
 

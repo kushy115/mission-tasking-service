@@ -22,6 +22,14 @@ class CompileRequest(BaseModel):
     operator_clearance: str = Field("STANDARD", description="Auth level for safety gates")
     drone_state: DroneState
     request_id: str | None = Field(None, description="Client-supplied idempotency key")
+    alternatives: bool = Field(
+        False,
+        description="If true, the planner emits 2–3 alternative plans (see DESIGN_DECISIONS §7).",
+    )
+    drone_ids: list[str] | None = Field(
+        None,
+        description="If set, compile a multi-drone group plan, one per id (see DESIGN_DECISIONS §9).",
+    )
 
 
 class CompileResponse(BaseModel):
@@ -30,6 +38,11 @@ class CompileResponse(BaseModel):
     plan: MissionPlan
     repair_loops: int = 0
     awaiting_approval: bool = False
+    # Extra alternatives (besides `plan`) for the operator to choose from.
+    # Each alternative has already passed the safety kernel.
+    alternatives: list[MissionPlan] = Field(default_factory=list)
+    # Multi-drone group response (one entry per drone_id; otherwise empty).
+    group_plans: list[MissionPlan] = Field(default_factory=list)
 
 
 class ApprovalRequest(BaseModel):

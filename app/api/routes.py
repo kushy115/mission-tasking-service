@@ -170,6 +170,7 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
         "request_id": req.request_id,
         "messages": [],
         "repair_attempts": 0,
+        "alternatives_requested": bool(req.alternatives),
     }
 
     log.info("compile request thread_id=%s area=%s command=%r", thread_id, req.area_id, req.command[:120])
@@ -198,10 +199,14 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
         CLARIFICATIONS_TOTAL.inc()
     COMPILE_REQUESTS.labels(status=plan.status.value).inc()
 
+    raw_alts = final_state.get("alternatives") or []
+    alternatives = [MissionPlan.model_validate(a) for a in raw_alts]
+
     return CompileResponse(
         plan=plan,
         repair_loops=repair_loops,
         awaiting_approval=(plan.status == MissionStatus.READY_FOR_APPROVAL),
+        alternatives=alternatives,
     )
 
 

@@ -492,7 +492,17 @@
       <button data-cmd="Go check something out there.">vague</button>
     </div>
 
-    <div style="margin-top: 20px;">
+    <div class="field" style="margin-top: 14px;">
+      <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+        <input type="checkbox" id="alternatives" style="width: auto; cursor: pointer;" />
+        <span>Generate alternative plans</span>
+      </label>
+      <div class="hint" style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+        Costs one extra LLM call. Operator picks one before approval.
+      </div>
+    </div>
+
+    <div style="margin-top: 16px;">
       <button id="compile" class="btn btn-primary btn-block">Compile mission</button>
     </div>
   </section>
@@ -558,6 +568,7 @@
 window.addEventListener('DOMContentLoaded', () => {
   let map, areaLayer = null, planLayer = null;
   let currentAreas = [], currentDrones = [], currentPlan = null;
+  let currentAlternatives = [], currentRepairLoops = 0;
 
   const $ = (id) => document.getElementById(id);
   const areaSel = $('area'), droneSel = $('drone');
@@ -740,12 +751,15 @@ window.addEventListener('DOMContentLoaded', () => {
           command: cmd,
           area_id: areaSel.value,
           operator_clearance: 'STANDARD',
-          drone_state: { drone_profile_id: droneSel.value, battery_pct: +battery.value }
+          drone_state: { drone_profile_id: droneSel.value, battery_pct: +battery.value },
+          alternatives: $('alternatives').checked,
         })
       });
       const body = await r.json();
       if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
       currentPlan = body.plan;
+      currentAlternatives = body.alternatives || [];
+      currentRepairLoops = body.repair_loops || 0;
       renderResult(body);
       // Rejection reasons carry the kernel's violation strings on rejected
       // plans; pass them so the map highlights the offending waypoints.
@@ -780,6 +794,29 @@ window.addEventListener('DOMContentLoaded', () => {
           <span>${body.repair_loops} repair${body.repair_loops === 1 ? '' : 's'}</span>
         </div>
       </div>`;
+
+    // Alternative-plan chips (when present, see DESIGN_DECISIONS §7).
+    const alts = body.alternatives || [];
+    if (alts.length > 0) {
+      const allPlans = [p, ...alts];
+      html += `<div class="section">
+        <div class="section-title">Alternative plans <span style="color:var(--muted);">(${alts.length + 1} options)</span></div>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          ${allPlans.map((plan, i) => `
+            <button class="alt-chip" data-idx="${i}" style="
+              background: ${i === 0 ? 'var(--accent-soft)' : 'var(--bg-elev)'};
+              color: ${i === 0 ? 'var(--accent)' : 'var(--fg-dim)'};
+              border: 1px solid ${i === 0 ? 'var(--accent)' : 'var(--border)'};
+              padding: 5px 12px; border-radius: 14px; font-size: 11px; cursor: pointer;
+              font-family: inherit; transition: all 0.15s;
+            ">
+              ${i === 0 ? '★ ' : ''}Plan ${i + 1}
+              <span style="opacity: 0.65; margin-left: 4px;">${(plan.total_duration_s/60).toFixed(1)}m · ${plan.total_battery_pct.toFixed(0)}%</span>
+            </button>
+          `).join('')}
+        </div>
+      </div>`;
+    }
 
     if (p.legs && p.legs.length) {
       html += `<div class="stats">
@@ -875,6 +912,22 @@ window.addEventListener('DOMContentLoaded', () => {
     $('approve')?.addEventListener('click', () => submitApproval(true));
     $('reject')?.addEventListener('click', () => submitApproval(false));
     $('verify')?.addEventListener('click', runVerify);
+
+    document.querySelectorAll('.alt-chip').forEach(chip =>
+      chip.addEventListener('click', () => {
+        const idx = parseInt(chip.dataset.idx);
+        const all = [currentPlan, ...currentAlternatives];
+        const swap = currentPlan === all[idx] ? null : all[idx];
+        if (!swap) return;
+        // Swap primary and selected alternative so the chip the user picks
+        // becomes the "current" plan in subsequent actions.
+        const old = currentPlan;
+        currentPlan = all[idx];
+        currentAlternatives = all.filter((_, i) => i !== idx);
+        renderResult({ plan: currentPlan, alternatives: currentAlternatives, repair_loops: currentRepairLoops });
+        drawPlanOnMap(currentPlan, currentPlan.rejection_reasons || []);
+      })
+    );
   }
 
   async function submitApproval(approve) {

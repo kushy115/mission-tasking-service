@@ -34,4 +34,7 @@ class CompileState(TypedDict, total=False):
     critique_notes: str
     alternatives: list[dict[str, Any]]  # extra plans; see DESIGN_DECISIONS §7
     primary_idx: int
+    alternatives_requested: bool
+    multi_drone_slot: dict[str, Any] | None  # see DESIGN_DECISIONS §9
+    _deconfliction: tuple[bool, list[str]] | None  # see DESIGN_DECISIONS §8
     messages: Annotated[list, add_messages]
