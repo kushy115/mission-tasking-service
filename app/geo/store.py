@@ -73,9 +73,19 @@ DDL = [
         status TEXT NOT NULL,
         approved BOOLEAN DEFAULT FALSE,
         operator_note TEXT DEFAULT '',
-        created_at TIMESTAMPTZ DEFAULT now()
+        created_at TIMESTAMPTZ DEFAULT now(),
+        -- Mission history extensions: original command, drone used, and every
+        -- repair-attempt draft so we can show a diff timeline for debugging.
+        command TEXT DEFAULT '',
+        drone_profile_id TEXT DEFAULT '',
+        repair_drafts JSONB DEFAULT '[]'::jsonb
     )
     """,
+    # Best-effort additive migrations for repos that pre-date the new columns.
+    "ALTER TABLE missions ADD COLUMN IF NOT EXISTS command TEXT DEFAULT ''",
+    "ALTER TABLE missions ADD COLUMN IF NOT EXISTS drone_profile_id TEXT DEFAULT ''",
+    "ALTER TABLE missions ADD COLUMN IF NOT EXISTS repair_drafts JSONB DEFAULT '[]'::jsonb",
+    "CREATE INDEX IF NOT EXISTS idx_missions_created_at ON missions(created_at DESC)",
 ]
 
 
@@ -220,15 +230,30 @@ def _profile_from_dict(profile_id: str, raw: dict) -> DroneProfile:
     )
 
 
-def save_mission(engine: Engine, plan_dict: dict) -> None:
+def save_mission(
+    engine: Engine,
+    plan_dict: dict,
+    command: str = "",
+    drone_profile_id: str = "",
+    repair_drafts: list[dict] | None = None,
+) -> None:
+    """Persist a final plan plus history metadata.
+
+    `repair_drafts` is a list of {attempt, draft_plan, violations} captured
+    during the graph's repair loop, so the UI can show a diff timeline.
+    """
     with engine.begin() as conn:
         conn.execute(
             text(
                 """
-                INSERT INTO missions(mission_id, area_id, plan, status)
-                VALUES (:mid, :aid, CAST(:p AS JSONB), :s)
+                INSERT INTO missions(mission_id, area_id, plan, status, command, drone_profile_id, repair_drafts)
+                VALUES (:mid, :aid, CAST(:p AS JSONB), :s, :cmd, :dpid, CAST(:rd AS JSONB))
                 ON CONFLICT (mission_id) DO UPDATE
-                  SET plan = EXCLUDED.plan, status = EXCLUDED.status
+                  SET plan = EXCLUDED.plan,
+                      status = EXCLUDED.status,
+                      command = EXCLUDED.command,
+                      drone_profile_id = EXCLUDED.drone_profile_id,
+                      repair_drafts = EXCLUDED.repair_drafts
                 """
             ),
             {
@@ -236,8 +261,77 @@ def save_mission(engine: Engine, plan_dict: dict) -> None:
                 "aid": plan_dict.get("area_id"),
                 "p": json.dumps(plan_dict),
                 "s": plan_dict.get("status"),
+                "cmd": command,
+                "dpid": drone_profile_id,
+                "rd": json.dumps(repair_drafts or []),
             },
         )
+
+
+def list_missions(engine: Engine, limit: int = 100) -> list[dict]:
+    """Return the N most-recent missions with summary fields. Used by the UI history."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT mission_id, area_id, drone_profile_id, status, command,
+                       approved, operator_note, created_at,
+                       jsonb_array_length(repair_drafts) AS repair_count,
+                       (plan->>'total_duration_s')::float AS duration_s,
+                       (plan->>'total_battery_pct')::float AS battery_pct,
+                       jsonb_array_length(plan->'legs') AS leg_count
+                FROM missions
+                ORDER BY created_at DESC
+                LIMIT :lim
+                """
+            ),
+            {"lim": limit},
+        ).all()
+    return [
+        {
+            "mission_id": r[0],
+            "area_id": r[1],
+            "drone_profile_id": r[2],
+            "status": r[3],
+            "command": r[4] or "",
+            "approved": bool(r[5]),
+            "operator_note": r[6] or "",
+            "created_at": r[7].isoformat() if r[7] else None,
+            "repair_count": int(r[8] or 0),
+            "duration_s": float(r[9]) if r[9] is not None else 0.0,
+            "battery_pct": float(r[10]) if r[10] is not None else 0.0,
+            "leg_count": int(r[11] or 0),
+        }
+        for r in rows
+    ]
+
+
+def load_mission_detail(engine: Engine, mission_id: str) -> dict | None:
+    """Full mission record: final plan + repair-draft timeline + metadata."""
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT plan, status, command, drone_profile_id, area_id,
+                       approved, operator_note, created_at, repair_drafts
+                FROM missions WHERE mission_id = :m
+                """
+            ),
+            {"m": mission_id},
+        ).first()
+    if not row:
+        return None
+    return {
+        "plan": row[0],
+        "status": row[1],
+        "command": row[2] or "",
+        "drone_profile_id": row[3] or "",
+        "area_id": row[4],
+        "approved": bool(row[5]),
+        "operator_note": row[6] or "",
+        "created_at": row[7].isoformat() if row[7] else None,
+        "repair_drafts": row[8] or [],
+    }
 
 
 def set_mission_approval(
@@ -258,32 +352,6 @@ def load_mission(engine: Engine, mission_id: str) -> dict | None:
             text("SELECT plan FROM missions WHERE mission_id = :m"), {"m": mission_id}
         ).first()
     return row[0] if row else None
-
-
-def list_missions(engine: Engine, limit: int = 50) -> list[dict]:
-    """Lightweight summary of recent missions, newest first. See DESIGN_DECISIONS.md §1."""
-    with engine.connect() as conn:
-        rows = conn.execute(
-            text(
-                """
-                SELECT mission_id, area_id, status, approved, operator_note, created_at
-                FROM missions ORDER BY created_at DESC LIMIT :lim
-                """
-            ),
-            {"lim": limit},
-        ).all()
-    return [
-        {
-            "mission_id": r[0],
-            "area_id": r[1],
-            "status": r[2],
-            # tri-state: null = never approved, true = approved, false = rejected
-            "approved": r[3],
-            "operator_note": r[4] or "",
-            "created_at": r[5].isoformat() if r[5] else None,
-        }
-        for r in rows
-    ]
 
 
 def geojson_from_polygon(poly: Polygon) -> dict:

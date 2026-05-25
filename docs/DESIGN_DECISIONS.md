@@ -388,3 +388,92 @@ sim and returns a summary. There's no visual sense of the drone actually
   the UI just re-syncs on the next frame.
 - **No persistence.** The stream is ephemeral. The one-shot `verify`
   endpoint is still the canonical "did the sim succeed" record.
+
+---
+
+# Cross-cutting decisions (DD-prefixed)
+
+These decisions span multiple features rather than belonging to one section
+above. They were captured before the per-feature sections were written and
+are preserved here for continuity.
+
+## DD-001 — `plan` node is a direct LLM call, not a tool-calling agent
+
+**Decision.** The planning step is implemented as a single `llm.invoke()` per
+attempt, with the geo context inlined into the system prompt. We do **not**
+use `langchain.agents.create_agent` + planning tools, even though `CLAUDE.md`
+originally specified an agent.
+
+**Why.** The agent setup made 5+ LLM calls per compile (one per tool decision
+plus a final structured-output pass). On Gemini's free tier that exhausted
+the 20-RPD quota in 2 compiles. The `response_format=Pydantic` + Gemini
+tool-calling combo also silently killed the uvicorn worker on response
+handling — no traceback, exit code 0, very hard to debug.
+
+**Trade-off.** We lose the agent's ability to dynamically choose which tool
+to call. We don't actually need that here — the geo context, drone profile,
+and area boundary are all known at plan time, so we just embed them. The
+deterministic safety kernel is still the source of truth on safety.
+
+**Where in code.** `app/graph/nodes.py` — see the big comment block above
+`plan_node`.
+
+---
+
+## DD-002 — Provider-agnostic LLM via `init_chat_model` + single `API_KEY` var
+
+**Decision.** The planner routes to whichever LLM provider is configured via
+`MTS_LLM_PROVIDER` (`anthropic` | `google_genai` | `openai`). All providers
+share the same `API_KEY` env var; the code maps it to whichever kwarg that
+provider's chat-model class accepts.
+
+**Why.** During development we had to switch providers mid-project (Gemini's
+free tier was too tight for iterative work; Anthropic Haiku is much more
+reliable). Hard-coding `ANTHROPIC_API_KEY` everywhere would have been
+painful. The unified `API_KEY` makes provider switches a one-config change
+with no code edits.
+
+**Trade-off.** Slightly less standard than each provider having its own env
+var name. If someone sets `ANTHROPIC_API_KEY` thinking it should work, it
+won't — they need `API_KEY`. We document this in `.env.example` and the
+notebook Cell 1 comments.
+
+**Where in code.** `app/graph/nodes.py` — `_llm_lazy()`. `app/config.py` —
+`Settings.api_key` + `llm_provider` + `llm_model`.
+
+---
+
+## DD-003 — Repair drafts persisted inline as JSONB on the `missions` row
+
+**Decision.** Every repair-loop attempt (draft plan + the violations that
+triggered the next attempt) is stored as a JSONB array inside the
+`missions.repair_drafts` column, not in a separate `repair_attempts` table.
+
+**Why.** Drafts are 1:N owned by the mission, always loaded together with
+the mission, and capped at ~3 entries (the repair-loop cap). A separate
+table would require a JOIN on every history lookup for zero benefit.
+
+**Trade-off.** JSONB cells can grow large for complex plans, but practical
+size stays under ~50 KB even with 3 drafts. If we ever lift the repair cap
+or store hundreds of drafts per mission, revisit this and split the table.
+
+**Where in code.** `app/geo/store.py` — `save_mission`, `load_mission_detail`,
+`list_missions`. Schema in the `DDL` constant.
+
+---
+
+## DD-004 — Additive-only DDL with `ADD COLUMN IF NOT EXISTS`
+
+**Decision.** Schema evolution is handled by appending `ALTER TABLE … IF NOT
+EXISTS` statements to the `DDL` list. No Alembic, no proper migration framework.
+
+**Why.** This is a demo project. Alembic adds heavyweight infrastructure
+(versioned migration files, autogenerate, env config) for a one-developer
+codebase. The additive-only constraint (no column renames, no type changes,
+no drops) means the same DDL works on fresh and pre-existing databases.
+
+**Trade-off.** Doesn't support destructive migrations or rollbacks. If this
+ever becomes a real production service with multiple operators changing the
+schema, swap to Alembic.
+
+**Where in code.** `app/geo/store.py` — `DDL` constant + `init_schema()`.

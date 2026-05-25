@@ -28,6 +28,7 @@ from app.geo.store import (
     list_missions,
     load_drone_profile,
     load_mission,
+    load_mission_detail,
     set_mission_approval,
     snap_home_to_boundary,
     upsert_area,
@@ -139,6 +140,22 @@ def delete_area_endpoint(area_id: str) -> dict[str, Any]:
 def list_drones_endpoint() -> list[dict]:
     """Return all drone profiles. Used by the UI."""
     return list_drones(get_engine())
+
+
+@router.get("/v1/missions")
+def list_missions_endpoint(limit: int = 100) -> list[dict]:
+    """Return recent missions (summary fields only). Used by the UI history page."""
+    limit = max(1, min(int(limit), 200))
+    return list_missions(get_engine(), limit=limit)
+
+
+@router.get("/v1/missions/{mission_id}")
+def get_mission_endpoint(mission_id: str) -> dict:
+    """Return full mission detail including the repair-draft timeline."""
+    detail = load_mission_detail(get_engine(), mission_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"mission {mission_id} not found")
+    return detail
 
 
 @router.get("/readyz")
@@ -309,22 +326,6 @@ def approve_mission(req: ApprovalRequest) -> ApprovalResponse:
         final_status=final,
         operator_note=req.operator_note,
     )
-
-
-@router.get("/v1/missions")
-def list_missions_endpoint(limit: int = 50) -> list[dict]:
-    """List recent missions (newest first). See docs/DESIGN_DECISIONS.md §1."""
-    limit = max(1, min(int(limit), 200))
-    return list_missions(get_engine(), limit=limit)
-
-
-@router.get("/v1/missions/{mission_id}")
-def get_mission_endpoint(mission_id: str) -> dict:
-    """Return the full stored MissionPlan JSON for one mission."""
-    raw = load_mission(get_engine(), mission_id)
-    if raw is None:
-        raise HTTPException(status_code=404, detail=f"mission {mission_id} not found")
-    return raw
 
 
 @router.get("/v1/missions/{mission_id}/export")

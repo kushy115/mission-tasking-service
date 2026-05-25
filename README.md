@@ -153,6 +153,13 @@ cover slow first-init when the graph compiles.
 - **Nightly `CronJob`** — runs `evals/run_evals.py` against the deployed
 service to catch LLM regressions that unit tests cannot.
 
+## Design decisions
+
+**📐 See [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md)** — running log
+of non-trivial architecture choices: why the planner is a direct LLM call
+instead of a tool-calling agent, the provider-agnostic LLM routing, the
+JSONB repair-draft storage, etc. Read this before making substantive changes.
+
 ## Observability
 
 **📖 See [docs/observability.md](docs/observability.md) for the metric

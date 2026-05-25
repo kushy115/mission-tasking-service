@@ -475,6 +475,14 @@ def validate_node(state: CompileState) -> dict[str, Any]:
             continue
         accepted_alts.append(alt_plan.model_dump())
 
+    # Capture this attempt for the mission-history diff view.
+    drafts = list(state.get("repair_drafts") or [])
+    drafts.append({
+        "attempt": state.get("repair_attempts", 0),
+        "draft_plan": plan.model_dump(),
+        "violations": list(violations),
+    })
+
     # Record each FAILED check so the dashboard can show which safety checks
     # trip most often (e.g. coverage-gap dominates → planner's pattern logic
     # is weak; battery dominates → planner is over-budgeting).
@@ -495,6 +503,7 @@ def validate_node(state: CompileState) -> dict[str, Any]:
         "draft_plan": plan.model_dump(),
         "validation_errors": violations,
         "constraints_report": report.model_dump(),
+        "repair_drafts": drafts,
         "alternatives": accepted_alts,
     }
 
@@ -672,7 +681,13 @@ def finalize_node(state: CompileState) -> dict[str, Any]:  # noqa: D401
         PLAN_DURATION.observe(plan.total_duration_s)
 
     try:
-        save_mission(get_engine(), plan.model_dump())
+        save_mission(
+            get_engine(),
+            plan.model_dump(),
+            command=state.get("raw_command", ""),
+            drone_profile_id=(state.get("drone_state") or {}).get("drone_profile_id", ""),
+            repair_drafts=state.get("repair_drafts") or [],
+        )
     except Exception as e:  # noqa: BLE001
         log.warning("save_mission skipped: %s", e)
 

@@ -30,6 +30,10 @@ class CompileState(TypedDict, total=False):
     status: str
     clarification_questions: list[str]
     rejection_reasons: list[str]
+    # Repair-draft timeline: one entry per (plan attempt, validation result).
+    # Captured by validate_node, persisted by finalize_node. Powers the UI
+    # diff view; see docs/DESIGN_DECISIONS.md#DD-003.
+    repair_drafts: list[dict[str, Any]]
     confidence_score: float | None  # set by critique node; see DESIGN_DECISIONS §6
     critique_notes: str
     alternatives: list[dict[str, Any]]  # extra plans; see DESIGN_DECISIONS §7
