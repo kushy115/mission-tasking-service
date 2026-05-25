@@ -711,6 +711,20 @@ window.addEventListener('DOMContentLoaded', () => {
       </div>`;
     }
 
+    if (p.legs && p.legs.length) {
+      html += `<div class="section">
+        <div class="section-title">Export</div>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <a class="btn btn-ghost" style="padding: 6px 12px; font-size: 12px; text-decoration: none;"
+             href="/v1/missions/${encodeURIComponent(p.mission_id)}/export?format=kml" download>KML</a>
+          <a class="btn btn-ghost" style="padding: 6px 12px; font-size: 12px; text-decoration: none;"
+             href="/v1/missions/${encodeURIComponent(p.mission_id)}/export?format=gpx" download>GPX</a>
+          <a class="btn btn-ghost" style="padding: 6px 12px; font-size: 12px; text-decoration: none;"
+             href="/v1/missions/${encodeURIComponent(p.mission_id)}/export?format=dji" download>DJI / Litchi</a>
+        </div>
+      </div>`;
+    }
+
     resultEl.innerHTML = html;
 
     $('approve')?.addEventListener('click', () => submitApproval(true));

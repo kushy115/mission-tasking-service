@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response
 from sqlalchemy import text
 
 from app.api.models import (
@@ -16,6 +17,7 @@ from app.api.models import (
     CompileResponse,
     VerifyResponse,
 )
+from app.export import EXPORT_FORMATS, render_export
 from app.geo.store import (
     get_engine,
     list_areas,
@@ -157,6 +159,28 @@ def get_mission_endpoint(mission_id: str) -> dict:
     if raw is None:
         raise HTTPException(status_code=404, detail=f"mission {mission_id} not found")
     return raw
+
+
+@router.get("/v1/missions/{mission_id}/export")
+def export_mission_endpoint(mission_id: str, format: str = "kml") -> Response:
+    """Export a mission plan as KML/GPX/DJI. See docs/DESIGN_DECISIONS.md §2."""
+    fmt = format.lower()
+    if fmt not in EXPORT_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown format '{format}'; supported: {sorted(EXPORT_FORMATS)}",
+        )
+    raw = load_mission(get_engine(), mission_id)
+    if raw is None:
+        raise HTTPException(status_code=404, detail=f"mission {mission_id} not found")
+    plan = MissionPlan.model_validate(raw)
+    body, spec = render_export(plan, fmt)
+    filename = f"mission-{mission_id}.{spec.extension}"
+    return Response(
+        content=body,
+        media_type=spec.media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/v1/missions/{mission_id}:verify", response_model=VerifyResponse)
