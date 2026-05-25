@@ -14,7 +14,8 @@ import json
 from dataclasses import dataclass
 
 from shapely import wkt
-from shapely.geometry import Polygon, mapping, shape
+from shapely.geometry import LineString, Point, Polygon, mapping, shape
+from shapely.ops import nearest_points
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
@@ -130,6 +131,23 @@ def upsert_area(engine: Engine, area_id: str, geojson: dict, ceiling_m: float) -
             )
 
 
+def snap_home_to_boundary(boundary: Polygon, home_lon: float, home_lat: float) -> tuple[float, float]:
+    """Project the user-picked home point onto the nearest point on the polygon
+    exterior. Matches kernel's "home_point is on the boundary" semantics.
+    See docs/DESIGN_DECISIONS.md §5.
+    """
+    p = Point(home_lon, home_lat)
+    boundary_line = LineString(boundary.exterior.coords)
+    snapped, _ = nearest_points(boundary_line, p)
+    return float(snapped.x), float(snapped.y)
+
+
+def delete_area(engine: Engine, area_id: str) -> bool:
+    with engine.begin() as conn:
+        res = conn.execute(text("DELETE FROM areas WHERE area_id = :a"), {"a": area_id})
+    return bool(res.rowcount)
+
+
 def upsert_drone(engine: Engine, profile_id: str, profile_dict: dict) -> None:
     with engine.begin() as conn:
         conn.execute(
@@ -240,6 +258,32 @@ def load_mission(engine: Engine, mission_id: str) -> dict | None:
             text("SELECT plan FROM missions WHERE mission_id = :m"), {"m": mission_id}
         ).first()
     return row[0] if row else None
+
+
+def list_missions(engine: Engine, limit: int = 50) -> list[dict]:
+    """Lightweight summary of recent missions, newest first. See DESIGN_DECISIONS.md §1."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT mission_id, area_id, status, approved, operator_note, created_at
+                FROM missions ORDER BY created_at DESC LIMIT :lim
+                """
+            ),
+            {"lim": limit},
+        ).all()
+    return [
+        {
+            "mission_id": r[0],
+            "area_id": r[1],
+            "status": r[2],
+            # tri-state: null = never approved, true = approved, false = rejected
+            "approved": r[3],
+            "operator_note": r[4] or "",
+            "created_at": r[5].isoformat() if r[5] else None,
+        }
+        for r in rows
+    ]
 
 
 def geojson_from_polygon(poly: Polygon) -> dict:

@@ -13,6 +13,8 @@
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+  <script defer src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
 
   <style>
     :root {
@@ -335,6 +337,94 @@
     }
     .leaflet-control-zoom a:hover { background: var(--panel-2) !important; }
 
+    /* ---------- area editor ---------- */
+    .editor-toolbar {
+      position: absolute; top: 12px; left: 12px; z-index: 1000;
+      display: flex; gap: 6px; flex-direction: column;
+    }
+    .editor-toolbar .btn {
+      padding: 6px 12px; font-size: 12px;
+    }
+    .editor-panel {
+      position: absolute; top: 12px; right: 12px; z-index: 1000;
+      background: rgba(17, 23, 38, 0.96); backdrop-filter: blur(10px);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 14px; width: 240px; box-shadow: var(--shadow-2);
+      display: none;
+    }
+    .editor-panel.open { display: block; }
+    .editor-panel h3 {
+      margin: 0 0 8px; font-size: 12px; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--muted); font-weight: 600;
+    }
+    .editor-panel .field { margin-bottom: 10px; }
+    .editor-panel .field label { font-size: 11px; }
+    .editor-hint {
+      font-size: 11px; color: var(--muted); line-height: 1.4; margin-bottom: 8px;
+    }
+    .editor-status {
+      font-size: 11px; padding: 6px 8px; border-radius: 4px;
+      background: var(--bg-elev); margin: 6px 0 10px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    /* leaflet.draw dark-mode polish */
+    .leaflet-draw-toolbar a {
+      background-color: var(--panel) !important; border: 1px solid var(--border) !important;
+      filter: invert(0.85);
+    }
+
+    /* ---------- history drawer ---------- */
+    .drawer {
+      position: fixed; top: 0; right: 0; bottom: 0; width: 380px;
+      background: var(--panel); border-left: 1px solid var(--border);
+      box-shadow: -8px 0 32px rgba(0,0,0,0.45);
+      transform: translateX(100%); transition: transform 0.25s ease;
+      z-index: 2000; display: flex; flex-direction: column;
+    }
+    .drawer.open { transform: translateX(0); }
+    .drawer-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 22px; border-bottom: 1px solid var(--border);
+    }
+    .drawer-head h3 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+    .drawer-close {
+      background: transparent; border: 0; color: var(--muted);
+      font-size: 18px; cursor: pointer; padding: 4px 8px; border-radius: 4px;
+    }
+    .drawer-close:hover { color: var(--fg); background: var(--bg-elev); }
+    .drawer-body { flex: 1; overflow: auto; padding: 10px 14px; }
+    .mission-row {
+      padding: 12px 14px; border: 1px solid var(--border);
+      border-radius: var(--radius-sm); margin-bottom: 8px;
+      cursor: pointer; transition: all 0.15s;
+      background: var(--bg-elev);
+    }
+    .mission-row:hover { border-color: var(--accent); background: var(--panel-2); }
+    .mission-row .mr-top {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .mission-row .mr-id {
+      font-family: 'JetBrains Mono', monospace; font-size: 11px;
+      color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      max-width: 180px;
+    }
+    .mission-row .mr-meta { display: flex; gap: 6px; font-size: 11px; color: var(--muted); }
+    .mission-row .mr-area { font-size: 12px; color: var(--fg-dim); margin-top: 2px; }
+    .mini-badge {
+      display: inline-block; padding: 2px 7px; border-radius: 10px;
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+    }
+    .mini-badge.ready { background: var(--ok-soft); color: var(--ok); }
+    .mini-badge.rejected { background: var(--err-soft); color: var(--err); }
+    .mini-badge.clarification { background: var(--warn-soft); color: var(--warn); }
+    .approval-tag {
+      font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px;
+      background: var(--bg-elev); border: 1px solid var(--border); color: var(--muted);
+    }
+    .approval-tag.approved { color: var(--ok); border-color: rgba(74,222,128,0.4); }
+    .approval-tag.op-rejected { color: var(--err); border-color: rgba(239,103,100,0.4); }
+
     /* scrollbar polish */
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -352,6 +442,7 @@
   </div>
   <div class="header-right">
     <nav class="nav-links">
+      <a class="nav-link" id="open-history" href="#">History</a>
       <a class="nav-link" href="/docs" target="_blank">API Docs</a>
       <a class="nav-link" href="http://localhost:3000" target="_blank">Grafana</a>
       <a class="nav-link" href="https://smith.langchain.com" target="_blank">LangSmith</a>
@@ -375,8 +466,18 @@
     </div>
 
     <div class="field">
-      <label for="drone">Drone profile</label>
+      <label for="drone">
+        Drone profile <span class="hint">— or check below for a group</span>
+      </label>
       <select id="drone"></select>
+      <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-top: 8px;">
+        <input type="checkbox" id="multi-drone" style="width: auto; cursor: pointer;" />
+        <span style="font-size: 12px; color: var(--fg-dim);">Coordinate as a multi-drone group</span>
+      </label>
+      <div id="multi-drone-picker" style="display: none; margin-top: 8px;">
+        <div class="hint" style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Pick 2+ drones — server assigns altitude layers (40, 70, 100m)</div>
+        <div id="multi-drone-chips" style="display: flex; flex-wrap: wrap; gap: 5px;"></div>
+      </div>
     </div>
 
     <div class="field">
@@ -401,7 +502,17 @@
       <button data-cmd="Go check something out there.">vague</button>
     </div>
 
-    <div style="margin-top: 20px;">
+    <div class="field" style="margin-top: 14px;">
+      <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+        <input type="checkbox" id="alternatives" style="width: auto; cursor: pointer;" />
+        <span>Generate alternative plans</span>
+      </label>
+      <div class="hint" style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+        Costs one extra LLM call. Operator picks one before approval.
+      </div>
+    </div>
+
+    <div style="margin-top: 16px;">
       <button id="compile" class="btn btn-primary btn-block">Compile mission</button>
     </div>
   </section>
@@ -410,6 +521,26 @@
   <section class="right">
     <div class="map-wrap">
       <div id="map"></div>
+      <div class="editor-toolbar">
+        <button id="edit-area-btn" class="btn btn-ghost" title="Draw a new operating area">✎ New area</button>
+      </div>
+      <div class="editor-panel" id="editor-panel">
+        <h3>Area editor</h3>
+        <div class="editor-hint">1. Draw a polygon (boundary).<br>2. Optionally add no-fly polygons.<br>3. Click a point as home base.</div>
+        <div class="field">
+          <label for="new-area-id">Area ID</label>
+          <input type="text" id="new-area-id" placeholder="e.g. north-field" />
+        </div>
+        <div class="field">
+          <label for="new-ceiling">Ceiling (m)</label>
+          <input type="text" id="new-ceiling" value="120" />
+        </div>
+        <div class="editor-status" id="editor-status">no boundary yet</div>
+        <div style="display: flex; gap: 6px;">
+          <button id="save-area-btn" class="btn btn-primary" style="flex:1; padding:7px;">Save</button>
+          <button id="cancel-area-btn" class="btn btn-ghost" style="padding:7px;">Cancel</button>
+        </div>
+      </div>
       <div class="legend">
         <div class="legend-row"><div class="legend-swatch" style="background:#5b9bff;"></div>Boundary</div>
         <div class="legend-row"><div class="legend-swatch" style="background:#ef6764;"></div>No-fly zone</div>
@@ -417,6 +548,11 @@
         <div class="legend-row"><div class="legend-swatch" style="background:#5b9bff;"></div>Transit / RTB</div>
         <div class="legend-row"><div class="legend-swatch" style="background:#a78bfa;"></div>Search pattern</div>
         <div class="legend-row"><div class="legend-swatch" style="background:#f5c463;"></div>Loiter / sensor</div>
+        <div class="legend-row" style="margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border);">
+          <div class="legend-dot" style="background:#ef6764;"></div>Hard violation
+        </div>
+        <div class="legend-row"><div class="legend-dot" style="background:#f5a35b;"></div>Envelope (alt/coverage)</div>
+        <div class="legend-row"><div class="legend-dot" style="background:#f5c463;"></div>Resource (battery)</div>
       </div>
     </div>
     <div id="result" class="result">
@@ -428,10 +564,22 @@
   </section>
 </main>
 
+<aside id="drawer" class="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <h3>Mission history</h3>
+    <button class="drawer-close" id="close-history" aria-label="Close">×</button>
+  </div>
+  <div class="drawer-body" id="history-body">
+    <div class="empty-state"><div class="empty-icon">📜</div><div>Loading…</div></div>
+  </div>
+</aside>
+
 <script defer>
 window.addEventListener('DOMContentLoaded', () => {
   let map, areaLayer = null, planLayer = null;
   let currentAreas = [], currentDrones = [], currentPlan = null;
+  let currentAlternatives = [], currentRepairLoops = 0;
+  let currentGroup = [];
 
   const $ = (id) => document.getElementById(id);
   const areaSel = $('area'), droneSel = $('drone');
@@ -485,7 +633,36 @@ window.addEventListener('DOMContentLoaded', () => {
       const endur = d.rated_endurance_s ? ` — ${Math.round(d.rated_endurance_s/60)}min endurance` : '';
       return `<option value="${d.profile_id}">${d.profile_id}${endur}</option>`;
     }).join('');
+    renderMultiDroneChips();
   }
+
+  function renderMultiDroneChips() {
+    const wrap = $('multi-drone-chips');
+    wrap.innerHTML = currentDrones.map(d => `
+      <button class="md-chip" data-id="${escapeHtml(d.profile_id)}" type="button" style="
+        background: var(--bg-elev); color: var(--fg-dim);
+        border: 1px solid var(--border); padding: 5px 10px;
+        border-radius: 14px; font-size: 11px; cursor: pointer;
+        font-family: inherit; transition: all 0.15s;
+      ">${escapeHtml(d.profile_id)}</button>
+    `).join('');
+    wrap.querySelectorAll('.md-chip').forEach(c => c.addEventListener('click', () => {
+      c.classList.toggle('selected');
+      if (c.classList.contains('selected')) {
+        c.style.background = 'var(--accent-soft)';
+        c.style.color = 'var(--accent)';
+        c.style.borderColor = 'var(--accent)';
+      } else {
+        c.style.background = 'var(--bg-elev)';
+        c.style.color = 'var(--fg-dim)';
+        c.style.borderColor = 'var(--border)';
+      }
+    }));
+  }
+
+  $('multi-drone').addEventListener('change', (e) => {
+    $('multi-drone-picker').style.display = e.target.checked ? 'block' : 'none';
+  });
 
   // ----- draw area
   function drawAreaOnMap(area) {
@@ -506,8 +683,41 @@ window.addEventListener('DOMContentLoaded', () => {
     map.fitBounds(L.geoJSON(area.boundary).getBounds(), { padding: [40, 40] });
   }
 
+  // ----- violation parser
+  //
+  // The kernel emits strings of known shape; we reshape them into per-waypoint
+  // and per-leg severity tags so the map can highlight what failed. The
+  // kernel's tests guard the string format — if it changes, update this regex.
+  function parseViolations(violations) {
+    const wp = {};  // key "li:wi" → severity ('hard' | 'envelope' | 'resource')
+    const leg = {}; // key "li" → severity
+    const wpRe = /^leg\[(\d+)\]\.waypoint\[(\d+)\]/;
+    const legRe = /^leg\[(\d+)\]/;
+    (violations || []).forEach(v => {
+      let sev = 'resource';
+      if (/outside geofence|no-fly-zone|intersects/i.test(v)) sev = 'hard';
+      else if (/alt |ceiling|min AGL|coverage gap|sensor swath|track spacing|SEARCH_PATTERN/i.test(v)) sev = 'envelope';
+      else if (/duration|endurance|reserve|battery|estimated_use/i.test(v)) sev = 'resource';
+      const wm = v.match(wpRe);
+      if (wm) {
+        const k = `${wm[1]}:${wm[2]}`;
+        wp[k] = _worseSeverity(wp[k], sev);
+      } else {
+        const lm = v.match(legRe);
+        if (lm) leg[lm[1]] = _worseSeverity(leg[lm[1]], sev);
+      }
+    });
+    return { wp, leg };
+  }
+  function _worseSeverity(a, b) {
+    const rank = { hard: 3, envelope: 2, resource: 1 };
+    if (!a) return b;
+    return rank[b] > rank[a] ? b : a;
+  }
+  const SEVERITY_COLOR = { hard: '#ef6764', envelope: '#f5a35b', resource: '#f5c463' };
+
   // ----- draw plan
-  function drawPlanOnMap(plan) {
+  function drawPlanOnMap(plan, violations) {
     if (planLayer) map.removeLayer(planLayer);
     if (!plan.legs || !plan.legs.length) return;
     const legColors = {
@@ -517,23 +727,70 @@ window.addEventListener('DOMContentLoaded', () => {
       SENSOR_TASK: '#f5c463',
       RETURN_TO_BASE: '#4ade80'
     };
+    const vio = parseViolations(violations);
     const layers = [];
     let wpCount = 0;
     plan.legs.forEach((leg, li) => {
       const pts = leg.geometry.map(w => [w.lat, w.lon]);
-      const col = legColors[leg.leg_type] || '#fff';
+      const legSev = vio.leg[String(li)];
+      const baseCol = legColors[leg.leg_type] || '#fff';
+      const col = legSev ? SEVERITY_COLOR[legSev] : baseCol;
+      const dash = legSev ? '6,5' : null;
       if (pts.length >= 2) {
         // Glow effect: two stacked polylines
         layers.push(L.polyline(pts, { color: col, weight: 7, opacity: 0.18 }));
-        layers.push(L.polyline(pts, { color: col, weight: 3, opacity: 0.95 })
-          .bindTooltip(`Leg ${li+1}: ${leg.leg_type}${leg.sensor_mode && leg.sensor_mode !== 'OFF' ? ' · ' + leg.sensor_mode : ''}`,
-                       { sticky: true }));
+        const inner = L.polyline(pts, { color: col, weight: 3, opacity: 0.95, dashArray: dash });
+        const tip = `Leg ${li+1}: ${leg.leg_type}` +
+          (leg.sensor_mode && leg.sensor_mode !== 'OFF' ? ' · ' + leg.sensor_mode : '') +
+          (legSev ? `<br><span style="color:${SEVERITY_COLOR[legSev]};">⚠ ${legSev} violation</span>` : '');
+        inner.bindTooltip(tip, { sticky: true });
+        layers.push(inner);
       }
-      leg.geometry.forEach((w) => {
+      leg.geometry.forEach((w, wi) => {
         wpCount++;
-        layers.push(L.circleMarker([w.lat, w.lon], {
-          radius: 4.5, color: col, fillColor: '#0a0e17', fillOpacity: 1, weight: 2
-        }).bindTooltip(`Waypoint ${wpCount} · ${w.alt_m.toFixed(0)}m AGL`, { sticky: true }));
+        const wpSev = vio.wp[`${li}:${wi}`];
+        const wpCol = wpSev ? SEVERITY_COLOR[wpSev] : baseCol;
+        const radius = wpSev ? 6.5 : 4.5;
+        const tipBase = `Waypoint ${wpCount} · ${w.alt_m.toFixed(0)}m AGL`;
+        const tip = wpSev
+          ? `${tipBase}<br><span style="color:${SEVERITY_COLOR[wpSev]};">⚠ ${wpSev} violation</span>`
+          : tipBase;
+        const marker = L.circleMarker([w.lat, w.lon], {
+          radius, color: wpCol, fillColor: '#0a0e17', fillOpacity: 1,
+          weight: wpSev ? 3 : 2,
+        }).bindTooltip(tip, { sticky: true });
+        if (wpSev === 'hard') {
+          // Add a pulsing halo for hard breaches so they pop visually.
+          layers.push(L.circleMarker([w.lat, w.lon], {
+            radius: 13, color: wpCol, fillOpacity: 0, weight: 1, opacity: 0.4, dashArray: '3,3',
+          }));
+        }
+        layers.push(marker);
+      });
+    });
+    planLayer = L.layerGroup(layers).addTo(map);
+  }
+
+  // Render every plan in a multi-drone group. Each drone gets its own hue
+  // (HSL-staggered) so siblings are visually distinguishable.
+  function drawGroupOnMap(group) {
+    if (planLayer) map.removeLayer(planLayer);
+    const layers = [];
+    group.forEach((plan, di) => {
+      const hue = (di * 137) % 360;  // golden-angle for max separation
+      const color = `hsl(${hue}, 70%, 60%)`;
+      plan.legs.forEach((leg, li) => {
+        const pts = leg.geometry.map(w => [w.lat, w.lon]);
+        if (pts.length >= 2) {
+          layers.push(L.polyline(pts, { color, weight: 7, opacity: 0.15 }));
+          layers.push(L.polyline(pts, { color, weight: 3, opacity: 0.9 })
+            .bindTooltip(`Drone ${di + 1} · Leg ${li + 1} (${leg.leg_type})`, { sticky: true }));
+        }
+        leg.geometry.forEach(w => {
+          layers.push(L.circleMarker([w.lat, w.lon], {
+            radius: 4, color, fillColor: '#0a0e17', fillOpacity: 1, weight: 2,
+          }).bindTooltip(`D${di + 1} · ${w.alt_m.toFixed(0)}m AGL`, { sticky: true }));
+        });
       });
     });
     planLayer = L.layerGroup(layers).addTo(map);
@@ -552,21 +809,38 @@ window.addEventListener('DOMContentLoaded', () => {
       </div>`;
 
     try {
+      const groupIds = $('multi-drone').checked
+        ? Array.from(document.querySelectorAll('.md-chip.selected')).map(c => c.dataset.id)
+        : null;
+      const payload = {
+        command: cmd,
+        area_id: areaSel.value,
+        operator_clearance: 'STANDARD',
+        drone_state: { drone_profile_id: droneSel.value, battery_pct: +battery.value },
+        alternatives: $('alternatives').checked,
+      };
+      if (groupIds && groupIds.length >= 1) {
+        payload.drone_ids = groupIds;
+      }
       const r = await fetch('/v1/missions:compile', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          command: cmd,
-          area_id: areaSel.value,
-          operator_clearance: 'STANDARD',
-          drone_state: { drone_profile_id: droneSel.value, battery_pct: +battery.value }
-        })
+        body: JSON.stringify(payload),
       });
       const body = await r.json();
       if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
       currentPlan = body.plan;
+      currentAlternatives = body.alternatives || [];
+      currentRepairLoops = body.repair_loops || 0;
+      currentGroup = body.group_plans || [];
       renderResult(body);
-      drawPlanOnMap(body.plan);
+      // Rejection reasons carry the kernel's violation strings on rejected
+      // plans; pass them so the map highlights the offending waypoints.
+      if (currentGroup.length > 1) {
+        drawGroupOnMap(currentGroup);
+      } else {
+        drawPlanOnMap(body.plan, body.plan.rejection_reasons || []);
+      }
     } catch (e) {
       resultEl.innerHTML = `
         <div class="status-bar">
@@ -598,6 +872,52 @@ window.addEventListener('DOMContentLoaded', () => {
         </div>
       </div>`;
 
+    // Multi-drone group indicator (when present, see DESIGN_DECISIONS §9).
+    const group = body.group_plans || [];
+    if (group.length > 1) {
+      html += `<div class="section">
+        <div class="section-title">Multi-drone group <span style="color: var(--muted);">(${group.length} drones)</span></div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          ${group.map((gp, i) => {
+            const hue = (i * 137) % 360;
+            const color = `hsl(${hue}, 70%, 60%)`;
+            const okBadge = gp.status === 'READY_FOR_APPROVAL' ? 'ready' : (gp.status === 'REJECTED' ? 'rejected' : 'clarification');
+            return `<div style="display: flex; align-items: center; gap: 8px; font-size: 12px;">
+              <div style="width: 12px; height: 12px; border-radius: 3px; background: ${color};"></div>
+              <span style="color: var(--fg-dim);">Drone ${i + 1}:</span>
+              <span class="mini-badge ${okBadge}">${gp.status.replace('_', ' ').toLowerCase()}</span>
+              <span style="color: var(--muted); font-family: 'JetBrains Mono', monospace; font-size: 11px;">
+                ${(gp.total_duration_s/60).toFixed(1)}m · ${gp.total_battery_pct.toFixed(0)}% bat · ${gp.legs.length} legs
+              </span>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    }
+
+    // Alternative-plan chips (when present, see DESIGN_DECISIONS §7).
+    const alts = body.alternatives || [];
+    if (alts.length > 0) {
+      const allPlans = [p, ...alts];
+      html += `<div class="section">
+        <div class="section-title">Alternative plans <span style="color:var(--muted);">(${alts.length + 1} options)</span></div>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          ${allPlans.map((plan, i) => `
+            <button class="alt-chip" data-idx="${i}" style="
+              background: ${i === 0 ? 'var(--accent-soft)' : 'var(--bg-elev)'};
+              color: ${i === 0 ? 'var(--accent)' : 'var(--fg-dim)'};
+              border: 1px solid ${i === 0 ? 'var(--accent)' : 'var(--border)'};
+              padding: 5px 12px; border-radius: 14px; font-size: 11px; cursor: pointer;
+              font-family: inherit; transition: all 0.15s;
+            ">
+              ${i === 0 ? '★ ' : ''}Plan ${i + 1}
+              <span style="opacity: 0.65; margin-left: 4px;">${(plan.total_duration_s/60).toFixed(1)}m · ${plan.total_battery_pct.toFixed(0)}%</span>
+            </button>
+          `).join('')}
+        </div>
+      </div>`;
+    }
+
     if (p.legs && p.legs.length) {
       html += `<div class="stats">
         <div class="stat">
@@ -627,6 +947,31 @@ window.addEventListener('DOMContentLoaded', () => {
       </div>`;
     }
 
+    // LLM critique (advisory, see DESIGN_DECISIONS.md §6).
+    if (p.confidence_score !== null && p.confidence_score !== undefined) {
+      const s = p.confidence_score;
+      const cls = s >= 0.8 ? 'ok' : (s >= 0.5 ? 'warn' : 'err');
+      const colorVar = { ok: 'var(--ok)', warn: 'var(--warn)', err: 'var(--err)' }[cls];
+      const pct = Math.round(s * 100);
+      html += `<div class="section">
+        <div class="section-title">Tactical critique <span style="color:${colorVar}">${pct}%</span></div>
+        <div style="background: var(--bg-elev); height: 6px; border-radius: 3px; overflow: hidden; margin: 4px 0 8px;">
+          <div style="width: ${pct}%; height: 100%; background: ${colorVar};"></div>
+        </div>
+        <div class="reasoning" style="border-left-color: ${colorVar};">${escapeHtml(p.critique_notes || '(no notes)')}</div>
+      </div>`;
+    }
+
+    // Weather (if the constraints report carries the detail string).
+    const wxDetail = p.constraints_satisfied?.weather_acceptable_detail;
+    if (wxDetail && wxDetail !== 'not evaluated') {
+      const wxOk = p.constraints_satisfied?.weather_acceptable;
+      html += `<div class="section">
+        <div class="section-title">Weather <span style="color: ${wxOk ? 'var(--ok)' : 'var(--err)'};">${wxOk ? '✓' : '⚠'}</span></div>
+        <div class="reasoning" style="border-left-color: ${wxOk ? 'var(--ok)' : 'var(--err)'};">${escapeHtml(wxDetail)}</div>
+      </div>`;
+    }
+
     if (p.rejection_reasons && p.rejection_reasons.length) {
       html += `<div class="section">
         <div class="section-title" style="color: var(--err);">Why it was rejected</div>
@@ -644,7 +989,22 @@ window.addEventListener('DOMContentLoaded', () => {
       html += `<div class="actions">
         <button class="btn btn-ok" id="approve">✓ Approve</button>
         <button class="btn btn-ghost" id="verify">Verify (sim)</button>
+        <button class="btn btn-ghost" id="live-sim">▶ Live sim</button>
         <button class="btn btn-danger" id="reject">Reject</button>
+      </div>`;
+    }
+
+    if (p.legs && p.legs.length) {
+      html += `<div class="section">
+        <div class="section-title">Export</div>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <a class="btn btn-ghost" style="padding: 6px 12px; font-size: 12px; text-decoration: none;"
+             href="/v1/missions/${encodeURIComponent(p.mission_id)}/export?format=kml" download>KML</a>
+          <a class="btn btn-ghost" style="padding: 6px 12px; font-size: 12px; text-decoration: none;"
+             href="/v1/missions/${encodeURIComponent(p.mission_id)}/export?format=gpx" download>GPX</a>
+          <a class="btn btn-ghost" style="padding: 6px 12px; font-size: 12px; text-decoration: none;"
+             href="/v1/missions/${encodeURIComponent(p.mission_id)}/export?format=dji" download>DJI / Litchi</a>
+        </div>
       </div>`;
     }
 
@@ -653,6 +1013,23 @@ window.addEventListener('DOMContentLoaded', () => {
     $('approve')?.addEventListener('click', () => submitApproval(true));
     $('reject')?.addEventListener('click', () => submitApproval(false));
     $('verify')?.addEventListener('click', runVerify);
+    $('live-sim')?.addEventListener('click', startLiveSim);
+
+    document.querySelectorAll('.alt-chip').forEach(chip =>
+      chip.addEventListener('click', () => {
+        const idx = parseInt(chip.dataset.idx);
+        const all = [currentPlan, ...currentAlternatives];
+        const swap = currentPlan === all[idx] ? null : all[idx];
+        if (!swap) return;
+        // Swap primary and selected alternative so the chip the user picks
+        // becomes the "current" plan in subsequent actions.
+        const old = currentPlan;
+        currentPlan = all[idx];
+        currentAlternatives = all.filter((_, i) => i !== idx);
+        renderResult({ plan: currentPlan, alternatives: currentAlternatives, repair_loops: currentRepairLoops });
+        drawPlanOnMap(currentPlan, currentPlan.rejection_reasons || []);
+      })
+    );
   }
 
   async function submitApproval(approve) {
@@ -674,6 +1051,88 @@ window.addEventListener('DOMContentLoaded', () => {
       note.textContent = 'Approval failed: ' + e.message;
       resultEl.appendChild(note);
     }
+  }
+
+  // ----- live simulation (websocket telemetry)
+  let liveSim = null;  // { ws, marker, trail, panel }
+
+  function stopLiveSim(reason) {
+    if (!liveSim) return;
+    try { liveSim.ws.close(); } catch (_) {}
+    if (liveSim.marker) map.removeLayer(liveSim.marker);
+    if (liveSim.trail) map.removeLayer(liveSim.trail);
+    if (liveSim.panel) liveSim.panel.remove();
+    liveSim = null;
+  }
+
+  function startLiveSim() {
+    if (!currentPlan || !currentPlan.legs?.length) return;
+    if (liveSim) stopLiveSim();
+
+    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${wsProto}//${location.host}/ws/missions/${encodeURIComponent(currentPlan.mission_id)}/sim?speed=10`;
+    const ws = new WebSocket(url);
+
+    // Live drone marker (pulsing) + trail polyline being drawn as frames arrive
+    const marker = L.circleMarker([0, 0], {
+      radius: 8, color: '#fff', fillColor: '#5b9bff', fillOpacity: 1, weight: 3,
+    });
+    const trail = L.polyline([], { color: '#5b9bff', weight: 4, opacity: 0.8 });
+
+    // Floating panel with live telemetry numbers
+    const panel = document.createElement('div');
+    panel.style.cssText = `
+      position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+      background: rgba(17, 23, 38, 0.95); backdrop-filter: blur(10px);
+      border: 1px solid var(--accent); border-radius: var(--radius);
+      padding: 10px 16px; z-index: 1100; min-width: 380px;
+      box-shadow: var(--shadow-2); font-size: 12px;
+      display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;
+    `;
+    panel.innerHTML = `
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Status</div><div id="sim-status" style="color:var(--accent); font-weight:600;">connecting…</div></div>
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Elapsed</div><div id="sim-t" style="font-family:'JetBrains Mono',monospace;">0.0s</div></div>
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Altitude</div><div id="sim-alt" style="font-family:'JetBrains Mono',monospace;">— m</div></div>
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Battery</div><div id="sim-bat" style="font-family:'JetBrains Mono',monospace;">—%</div></div>
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Leg</div><div id="sim-leg" style="font-family:'JetBrains Mono',monospace;">—</div></div>
+    `;
+    document.querySelector('.map-wrap').appendChild(panel);
+    liveSim = { ws, marker, trail, panel };
+
+    ws.onopen = () => { panel.querySelector('#sim-status').textContent = 'flying'; };
+    ws.onerror = () => { panel.querySelector('#sim-status').textContent = 'ws error'; panel.querySelector('#sim-status').style.color = 'var(--err)'; };
+    ws.onclose = () => { /* terminal frame handles status text */ };
+
+    ws.onmessage = (evt) => {
+      const f = JSON.parse(evt.data);
+      if (f.error) { panel.querySelector('#sim-status').textContent = f.error; return; }
+      const ll = [f.lat, f.lon];
+      // Lazy-add layers once we have a real position
+      if (!marker._added) { marker.addTo(map); trail.addTo(map); marker._added = true; }
+      marker.setLatLng(ll);
+      trail.addLatLng(ll);
+
+      panel.querySelector('#sim-t').textContent   = `${f.t.toFixed(1)}s`;
+      panel.querySelector('#sim-alt').textContent = `${f.alt_m.toFixed(0)} m`;
+      panel.querySelector('#sim-bat').textContent = `${f.battery_pct.toFixed(1)}%`;
+      panel.querySelector('#sim-leg').textContent = `${f.leg_idx + 1} (${f.leg_type})`;
+
+      const sBat = panel.querySelector('#sim-bat');
+      sBat.style.color = f.battery_pct < 20 ? 'var(--err)' : (f.battery_pct < 35 ? 'var(--warn)' : 'var(--fg)');
+
+      if (f.status !== 'flying') {
+        const statusEl = panel.querySelector('#sim-status');
+        statusEl.textContent = f.status;
+        statusEl.style.color = f.status === 'done' ? 'var(--ok)' : 'var(--err)';
+        if (f.detail) statusEl.title = f.detail;
+        // auto-close after a short pause so the operator can see the final state
+        setTimeout(() => stopLiveSim('done'), 5000);
+      }
+    };
+
+    // Esc cancels
+    const escHandler = (e) => { if (e.key === 'Escape') { stopLiveSim('esc'); document.removeEventListener('keydown', escHandler); } };
+    document.addEventListener('keydown', escHandler);
   }
 
   async function runVerify() {
@@ -702,6 +1161,182 @@ window.addEventListener('DOMContentLoaded', () => {
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c =>
       ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  }
+
+  // ----- area editor (Leaflet.draw)
+  let editorState = null;  // { drawnItems, draftBoundary, draftNfzs, draftHome, controls }
+  $('edit-area-btn').addEventListener('click', startEditor);
+  $('cancel-area-btn').addEventListener('click', endEditor);
+  $('save-area-btn').addEventListener('click', saveArea);
+
+  function setEditorStatus(text) { $('editor-status').textContent = text; }
+
+  function startEditor() {
+    if (editorState) return;
+    if (areaLayer) map.removeLayer(areaLayer);
+    if (planLayer) { map.removeLayer(planLayer); planLayer = null; }
+
+    const drawnItems = new L.FeatureGroup().addTo(map);
+    const controls = new L.Control.Draw({
+      position: 'topleft',
+      edit: { featureGroup: drawnItems, remove: true },
+      draw: {
+        polygon: { shapeOptions: { color: '#5b9bff', weight: 2 } },
+        polyline: false, rectangle: false, circle: false, circlemarker: false,
+        marker: true,  // used to pick home base
+      },
+    });
+    map.addControl(controls);
+
+    editorState = { drawnItems, draftBoundary: null, draftNfzs: [], draftHome: null, controls };
+    $('editor-panel').classList.add('open');
+    $('edit-area-btn').style.display = 'none';
+    setEditorStatus('draw boundary first');
+
+    map.on(L.Draw.Event.CREATED, onShapeCreated);
+  }
+
+  function onShapeCreated(e) {
+    if (!editorState) return;
+    const layer = e.layer;
+    if (e.layerType === 'polygon') {
+      if (!editorState.draftBoundary) {
+        editorState.draftBoundary = layer;
+        layer.setStyle({ color: '#5b9bff', weight: 2.5, fillOpacity: 0.04 });
+        editorState.drawnItems.addLayer(layer);
+        setEditorStatus('boundary set · add NFZs or click home marker');
+      } else {
+        // subsequent polygons → NFZs
+        layer.setStyle({ color: '#ef6764', weight: 2, fillOpacity: 0.18 });
+        editorState.drawnItems.addLayer(layer);
+        editorState.draftNfzs.push(layer);
+        setEditorStatus(`boundary + ${editorState.draftNfzs.length} NFZ${editorState.draftNfzs.length === 1 ? '' : 's'}`);
+      }
+    } else if (e.layerType === 'marker') {
+      if (editorState.draftHome) editorState.drawnItems.removeLayer(editorState.draftHome);
+      editorState.draftHome = layer;
+      editorState.drawnItems.addLayer(layer);
+      const ll = layer.getLatLng();
+      setEditorStatus(`home set: ${ll.lat.toFixed(5)},${ll.lng.toFixed(5)} (server will snap to boundary)`);
+    }
+  }
+
+  function endEditor() {
+    if (!editorState) return;
+    map.removeLayer(editorState.drawnItems);
+    map.removeControl(editorState.controls);
+    map.off(L.Draw.Event.CREATED, onShapeCreated);
+    editorState = null;
+    $('editor-panel').classList.remove('open');
+    $('edit-area-btn').style.display = '';
+    // restore previous area on the map
+    const a = currentAreas.find(x => x.area_id === areaSel.value) || currentAreas[0];
+    if (a) drawAreaOnMap(a);
+  }
+
+  async function saveArea() {
+    if (!editorState) return;
+    const id = $('new-area-id').value.trim();
+    const ceiling = parseFloat($('new-ceiling').value);
+    if (!id) { setEditorStatus('area ID required'); return; }
+    if (!editorState.draftBoundary) { setEditorStatus('draw a boundary first'); return; }
+    if (!editorState.draftHome) { setEditorStatus('drop a home marker'); return; }
+
+    const body = {
+      area_id: id,
+      ceiling_m: ceiling || 120.0,
+      boundary: editorState.draftBoundary.toGeoJSON().geometry,
+      nfzs: editorState.draftNfzs.map(l => l.toGeoJSON().geometry),
+      home_lon: editorState.draftHome.getLatLng().lng,
+      home_lat: editorState.draftHome.getLatLng().lat,
+    };
+    try {
+      const r = await fetch('/v1/areas', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const resp = await r.json();
+      if (!r.ok) throw new Error(resp.detail || `HTTP ${r.status}`);
+      setEditorStatus(`saved · home snapped to ${resp.home_lat.toFixed(5)},${resp.home_lon.toFixed(5)}`);
+      // reload areas + select the new one
+      await loadAreas();
+      areaSel.value = id;
+      const a = currentAreas.find(x => x.area_id === id);
+      if (a) drawAreaOnMap(a);
+      setTimeout(endEditor, 800);
+    } catch (e) {
+      setEditorStatus('save failed: ' + e.message);
+    }
+  }
+
+  // ----- history drawer
+  const drawer = $('drawer');
+  const historyBody = $('history-body');
+  $('open-history').addEventListener('click', (e) => {
+    e.preventDefault();
+    drawer.classList.add('open');
+    drawer.setAttribute('aria-hidden', 'false');
+    loadHistory();
+  });
+  $('close-history').addEventListener('click', () => {
+    drawer.classList.remove('open');
+    drawer.setAttribute('aria-hidden', 'true');
+  });
+
+  async function loadHistory() {
+    historyBody.innerHTML = `<div class="empty-state"><div class="spinner" style="color: var(--accent);"></div><div style="margin-top: 8px;">Loading missions…</div></div>`;
+    try {
+      const r = await fetch('/v1/missions?limit=50');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const items = await r.json();
+      if (!items.length) {
+        historyBody.innerHTML = `<div class="empty-state"><div class="empty-icon">📜</div><div>No missions yet. Compile one to populate history.</div></div>`;
+        return;
+      }
+      const badgeCls = { READY_FOR_APPROVAL: 'ready', REJECTED: 'rejected', NEEDS_CLARIFICATION: 'clarification' };
+      historyBody.innerHTML = items.map(m => {
+        const cls = badgeCls[m.status] || 'rejected';
+        const when = m.created_at ? new Date(m.created_at).toLocaleString() : '';
+        let approvalTag = '';
+        if (m.approved === true) approvalTag = '<span class="approval-tag approved">approved</span>';
+        else if (m.approved === false) approvalTag = '<span class="approval-tag op-rejected">op-rejected</span>';
+        return `<div class="mission-row" data-id="${escapeHtml(m.mission_id)}" data-area="${escapeHtml(m.area_id || '')}">
+          <div class="mr-top">
+            <span class="mr-id" title="${escapeHtml(m.mission_id)}">${escapeHtml(m.mission_id)}</span>
+            <span class="mini-badge ${cls}">${m.status.replace('_', ' ').toLowerCase()}</span>
+          </div>
+          <div class="mr-area">${escapeHtml(m.area_id || '—')} ${approvalTag}</div>
+          <div class="mr-meta"><span>${escapeHtml(when)}</span></div>
+        </div>`;
+      }).join('');
+      historyBody.querySelectorAll('.mission-row').forEach(row => {
+        row.addEventListener('click', () => loadMissionDetail(row.dataset.id, row.dataset.area));
+      });
+    } catch (e) {
+      historyBody.innerHTML = `<div class="empty-state" style="color: var(--err);">Failed to load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function loadMissionDetail(mid, areaId) {
+    try {
+      const r = await fetch('/v1/missions/' + encodeURIComponent(mid));
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const plan = await r.json();
+      // Switch area selector if needed so the boundary matches the loaded plan.
+      if (areaId && areaSel.value !== areaId) {
+        areaSel.value = areaId;
+        const a = currentAreas.find(x => x.area_id === areaId);
+        if (a) drawAreaOnMap(a);
+      }
+      currentPlan = plan;
+      renderResult({ plan, repair_loops: 0 });
+      drawPlanOnMap(plan, plan.rejection_reasons || []);
+      drawer.classList.remove('open');
+      drawer.setAttribute('aria-hidden', 'true');
+    } catch (e) {
+      historyBody.insertAdjacentHTML('afterbegin',
+        `<div class="toast err" style="margin: 0 0 10px;">Load failed: ${escapeHtml(e.message)}</div>`);
+    }
   }
 
   loadAreas();

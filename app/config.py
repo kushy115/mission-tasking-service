@@ -38,6 +38,13 @@ class Settings(BaseSettings):
 
     weather_provider: str = Field("synthetic", alias="MTS_WEATHER_PROVIDER")
     weather_seed: int = Field(42, alias="MTS_WEATHER_SEED")
+    # Hard reject thresholds — see docs/DESIGN_DECISIONS.md §4.
+    weather_max_wind_mps: float = Field(12.0, alias="MTS_WEATHER_MAX_WIND_MPS")
+    weather_max_gust_mps: float = Field(16.0, alias="MTS_WEATHER_MAX_GUST_MPS")
+    weather_min_visibility_m: float = Field(1500.0, alias="MTS_WEATHER_MIN_VISIBILITY_M")
+    weather_max_precip_mmh: float = Field(2.5, alias="MTS_WEATHER_MAX_PRECIP_MMH")
+    # Wind power penalty: per-m/s multiplier on cruise/hover power.
+    weather_wind_power_coeff: float = Field(0.02, alias="MTS_WEATHER_WIND_COEFF")
 
 
 @lru_cache

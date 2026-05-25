@@ -93,8 +93,19 @@ def _sensor_draw_w(profile: DroneProfile, mode: SensorMode | None) -> float:
     return spec.power_w if spec else 0.0
 
 
-def estimate_leg(leg: MissionLeg, profile: DroneProfile) -> LegEnergy:
-    """Compute time + energy + battery_pct for a single leg."""
+def estimate_leg(
+    leg: MissionLeg,
+    profile: DroneProfile,
+    *,
+    wind_mps: float = 0.0,
+    wind_coeff: float = 0.0,
+) -> LegEnergy:
+    """Compute time + energy + battery_pct for a single leg.
+
+    Wind penalty: avg_power_w *= (1 + wind_coeff * wind_mps). Defaults to zero
+    so the existing physics behavior is unchanged when no weather is supplied.
+    See docs/DESIGN_DECISIONS.md §4.
+    """
     pts = leg.geometry
     dist_m = leg_distance_m(leg)
     horizontal_time_s = dist_m / profile.cruise_speed_mps if profile.cruise_speed_mps > 0 else 0.0
@@ -121,6 +132,9 @@ def estimate_leg(leg: MissionLeg, profile: DroneProfile) -> LegEnergy:
         # average of cruise and hover.
         avg_power_w = (profile.cruise_power_w + profile.hover_power_w) / 2.0 + sensor_w
 
+    if wind_mps > 0 and wind_coeff > 0:
+        avg_power_w *= 1.0 + wind_coeff * wind_mps
+
     energy_wh = (avg_power_w * duration_s) / 3600.0
     battery_pct = (energy_wh / profile.battery_wh) * 100.0 if profile.battery_wh > 0 else 0.0
     return LegEnergy(
@@ -141,8 +155,16 @@ class MissionEnergy:
     total_battery_pct: float
 
 
-def estimate_mission(legs: list[MissionLeg], profile: DroneProfile) -> MissionEnergy:
-    estimates = tuple(estimate_leg(leg, profile) for leg in legs)
+def estimate_mission(
+    legs: list[MissionLeg],
+    profile: DroneProfile,
+    *,
+    wind_mps: float = 0.0,
+    wind_coeff: float = 0.0,
+) -> MissionEnergy:
+    estimates = tuple(
+        estimate_leg(leg, profile, wind_mps=wind_mps, wind_coeff=wind_coeff) for leg in legs
+    )
     total_duration = sum(e.duration_s for e in estimates)
     total_energy = sum(e.energy_wh for e in estimates)
     total_pct = sum(e.battery_pct for e in estimates)

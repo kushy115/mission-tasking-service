@@ -32,7 +32,9 @@ from app.graph.state import CompileState
 from app.schemas.enums import MissionStatus
 from app.schemas.plan import MissionPlan
 from app.tools.planning_tools import PLANNING_TOOLS
+from app.validation.deconfliction import deconfliction_check
 from app.validation.kernel import validate_plan
+from app.weather import get_weather_for_area
 
 log = logging.getLogger(__name__)
 
@@ -88,8 +90,23 @@ def intake_node(state: CompileState) -> dict[str, Any]:  # noqa: D401
             "rejection_reasons": ["insufficient operator clearance"],
         }
 
+    # Fetch weather once per compile (cached for 10 min in the provider layer).
+    # Failures fall back to synthetic — never blocks intake.
+    weather_obs = get_weather_for_area(geo.home_point[1], geo.home_point[0])
+    weather_dict = {
+        "wind_mps": weather_obs.wind_mps,
+        "gust_mps": weather_obs.gust_mps,
+        "wind_dir_deg": weather_obs.wind_dir_deg,
+        "visibility_m": weather_obs.visibility_m,
+        "precipitation_mmh": weather_obs.precipitation_mmh,
+        "temperature_c": weather_obs.temperature_c,
+        "source": weather_obs.source,
+        "summary": weather_obs.summary_for_prompt(),
+    }
+
     return {
         "geo_context": geo_serialized,
+        "weather": weather_dict,
         "repair_attempts": 0,
     }
 
@@ -278,6 +295,33 @@ def plan_node(state: CompileState) -> dict[str, Any]:
         f"  altitude_ceiling_m:                 {geo['altitude_ceiling_m']}",
         f"  home_lon, home_lat:                 {geo['home_lon']}, {geo['home_lat']}",
     ]
+    wx = state.get("weather")
+    if wx:
+        user_msg_parts.append(f"WEATHER: {wx.get('summary', '')}")
+        user_msg_parts.append(
+            "  Consider weather when choosing sensor (low visibility favors IR), "
+            "orienting search patterns (cross-wind sweeps lose more battery), "
+            "and selecting altitudes (higher altitudes feel stronger winds)."
+        )
+    # Multi-drone group context: planner is told which slot/layer it occupies.
+    md = state.get("multi_drone_slot")
+    if md:
+        user_msg_parts.append(
+            f"\nMULTI-DRONE GROUP — you are planning drone {md['index']+1} of "
+            f"{md['total']}. Your assigned altitude band is "
+            f"{md['alt_min']:.0f}–{md['alt_max']:.0f}m. Siblings are on bands: "
+            f"{md['sibling_bands']}. Stagger your first leg's est_duration_s by "
+            f"{md['takeoff_offset_s']:.0f}s so the group doesn't collide at home."
+        )
+    if state.get("alternatives_requested"):
+        user_msg_parts.append(
+            "\nALTERNATIVES MODE — produce 2 or 3 alternative plans (e.g. a "
+            "conservative-battery one, an aggressive-coverage one, a different "
+            "search orientation). Return ONE JSON object with shape "
+            '{"plans": [<plan>, <plan>, ...], "primary_idx": <int>}. Each '
+            "<plan> matches the MissionPlan schema. Pick primary_idx for the "
+            "one you most recommend."
+        )
     if repair_attempts > 0 and errors:
         user_msg_parts.append(
             "\nREPAIR PASS — the deterministic safety kernel rejected your previous "
@@ -320,6 +364,20 @@ def plan_node(state: CompileState) -> dict[str, Any]:
             "validation_errors": [f"plan was not valid JSON: {e}"],
         }
 
+    # Alternatives mode: payload is {"plans": [...], "primary_idx": N}.
+    # We pick the primary as the draft_plan; the rest are stashed for the
+    # validate node to filter and stamp on the final response.
+    raw_alternatives: list[dict] = []
+    if isinstance(payload, dict) and "plans" in payload and isinstance(payload["plans"], list):
+        plans = payload["plans"]
+        if not plans:
+            return {"draft_plan": None, "validation_errors": ["alternatives list was empty"]}
+        primary_idx = int(payload.get("primary_idx") or 0)
+        primary_idx = max(0, min(primary_idx, len(plans) - 1))
+        primary = plans[primary_idx]
+        raw_alternatives = [p for i, p in enumerate(plans) if i != primary_idx]
+        payload = primary
+
     payload.setdefault("mission_id", str(uuid.uuid4()))
     payload["area_id"] = state["area_id"]
 
@@ -331,7 +389,11 @@ def plan_node(state: CompileState) -> dict[str, Any]:
             "draft_plan": None,
             "validation_errors": [f"plan failed schema: {e}"],
         }
-    return {"draft_plan": structured.model_dump()}
+    out = {"draft_plan": structured.model_dump()}
+    if raw_alternatives:
+        # Stash raw alternative dicts; validate_node will filter and convert.
+        out["alternatives"] = raw_alternatives
+    return out
 
 
 # ---- validate ---------------------------------------------------------------
@@ -361,7 +423,57 @@ def validate_node(state: CompileState) -> dict[str, Any]:
     profile = load_drone_profile(engine, drone_id)
     starting_pct = float(state["drone_state"].get("battery_pct", 100.0))
 
-    violations, report = validate_plan(plan, geo, profile, starting_battery_pct=starting_pct)
+    # Re-hydrate the weather observation captured in intake (so cost doesn't
+    # double-bill per repair attempt) and feed it through the kernel.
+    weather_obs = None
+    wx = state.get("weather")
+    if wx:
+        from app.weather import WeatherObservation
+        weather_obs = WeatherObservation(
+            wind_mps=wx["wind_mps"], gust_mps=wx["gust_mps"],
+            wind_dir_deg=wx["wind_dir_deg"], visibility_m=wx["visibility_m"],
+            precipitation_mmh=wx["precipitation_mmh"], temperature_c=wx["temperature_c"],
+            source=wx.get("source", "cached"),
+        )
+
+    # Airspace deconfliction: compare against approved missions in the same
+    # area within the active window. See DESIGN_DECISIONS §8. The state can
+    # carry a precomputed value for the multi-drone group case where siblings
+    # haven't been persisted yet.
+    deconfliction = state.get("_deconfliction")
+    if deconfliction is None:
+        try:
+            deconfliction = deconfliction_check(engine, plan, self_mission_id=plan.mission_id)
+        except Exception as e:  # noqa: BLE001
+            log.warning("deconfliction check failed: %s", e)
+            deconfliction = (True, [])
+
+    violations, report = validate_plan(
+        plan, geo, profile, starting_battery_pct=starting_pct, weather=weather_obs,
+        deconfliction=deconfliction,
+    )
+
+    # Filter alternatives independently: each must pass the kernel; violators
+    # are dropped silently (operator never sees an unsafe "choice"). Repair
+    # loop applies only to the primary plan. See DESIGN_DECISIONS §7.
+    raw_alts = state.get("alternatives") or []
+    accepted_alts: list[dict] = []
+    for i, raw in enumerate(raw_alts):
+        try:
+            raw.setdefault("mission_id", f"{plan.mission_id}-alt{i+1}")
+            raw["area_id"] = state["area_id"]
+            alt_plan = MissionPlan.model_validate(raw)
+        except Exception as e:  # noqa: BLE001
+            log.info("dropping alternative %d: schema failure (%s)", i, e)
+            continue
+        alt_vios, _alt_report = validate_plan(
+            alt_plan, geo, profile, starting_battery_pct=starting_pct,
+            weather=weather_obs, deconfliction=deconfliction,
+        )
+        if alt_vios:
+            log.info("dropping alternative %d: %d violations", i, len(alt_vios))
+            continue
+        accepted_alts.append(alt_plan.model_dump())
 
     # Record each FAILED check so the dashboard can show which safety checks
     # trip most often (e.g. coverage-gap dominates → planner's pattern logic
@@ -373,6 +485,8 @@ def validate_node(state: CompileState) -> dict[str, Any]:
         "within_endurance",
         "sensor_coverage_adequate",
         "ends_with_rtb",
+        "weather_acceptable",
+        "airspace_deconflicted",
     ):
         if not getattr(report, check_name):
             VALIDATION_VIOLATIONS.labels(check_name).inc()
@@ -381,7 +495,91 @@ def validate_node(state: CompileState) -> dict[str, Any]:
         "draft_plan": plan.model_dump(),
         "validation_errors": violations,
         "constraints_report": report.model_dump(),
+        "alternatives": accepted_alts,
     }
+
+
+# ---- critique --------------------------------------------------------------
+#
+# See docs/DESIGN_DECISIONS.md §6. A second LLM call after validation succeeds.
+# Output is advisory only — failure to critique never blocks approval. Skipped
+# for REJECTED / NEEDS_CLARIFICATION plans where there's nothing to evaluate.
+
+_CRITIQUE_SYSTEM_PROMPT = """You are a senior drone operator critiquing a
+proposed mission plan that has already passed the safety kernel.
+
+Evaluate the plan on TACTICAL QUALITY — not safety, which is already verified.
+Consider:
+  - Is the search pattern oriented sensibly given the wind direction (sweeping
+    cross-wind is less efficient)?
+  - Is the sensor choice right for the visibility conditions?
+  - Are loiter points placed where they'll see what the operator asked for?
+  - Are altitudes high enough for situational awareness, low enough for sensor
+    resolution?
+  - Does the leg ordering minimize backtracking?
+
+Reply with a single JSON object — no prose, no markdown:
+  {
+    "confidence_score": <float 0.0–1.0>,
+    "critique_notes": "<one or two sentences explaining the score>"
+  }
+
+Score guide:
+  0.8–1.0 = solid, no obvious tactical issues
+  0.5–0.8 = workable but some improvement possible
+  0.0–0.5 = the plan is legal but tactically questionable
+"""
+
+
+def critique_node(state: CompileState) -> dict[str, Any]:
+    """Advisory second-pass LLM critique. Never blocks. See DESIGN_DECISIONS §6."""
+    log.info("→ critique")
+    raw = state.get("draft_plan") or {}
+    plan_status = raw.get("status")
+    # Only run on plans that actually flew through the planner.
+    if plan_status in (MissionStatus.NEEDS_CLARIFICATION.value, MissionStatus.REJECTED.value):
+        return {}
+    if not raw.get("legs"):
+        return {}
+
+    settings = get_settings()
+    if not settings.api_key:
+        # No LLM available; degrade gracefully (we still return the plan).
+        log.info("critique skipped: no API key configured")
+        return {"confidence_score": None, "critique_notes": "critique skipped (no LLM available)"}
+
+    llm = _llm_lazy()
+    wx = state.get("weather") or {}
+    user_msg = (
+        f"PLAN (already passed safety kernel):\n{json.dumps(raw, indent=2)[:6000]}\n\n"
+        f"WEATHER: {wx.get('summary', 'unknown')}\n"
+        f"OPERATOR COMMAND: {state.get('raw_command', '')}\n"
+    )
+    start = time.perf_counter()
+    provider, model = settings.llm_provider, settings.llm_model
+    try:
+        ai_msg = llm.invoke([
+            {"role": "system", "content": _CRITIQUE_SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ])
+    except Exception as e:  # noqa: BLE001
+        log.warning("critique LLM call failed: %s — continuing without it", e)
+        LLM_CALLS_TOTAL.labels(provider, model, "error").inc()
+        LLM_DURATION.labels(provider, model).observe(time.perf_counter() - start)
+        return {"confidence_score": None, "critique_notes": f"critique unavailable: {type(e).__name__}"}
+    LLM_CALLS_TOTAL.labels(provider, model, "ok").inc()
+    LLM_DURATION.labels(provider, model).observe(time.perf_counter() - start)
+
+    text = ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
+    try:
+        payload = json.loads(_strip_to_json(text))
+        score = float(payload.get("confidence_score") or 0.0)
+        score = max(0.0, min(1.0, score))
+        notes = str(payload.get("critique_notes") or "").strip()[:500]
+    except Exception as e:  # noqa: BLE001
+        log.warning("critique JSON parse failed: %s; raw: %r", e, text[:200])
+        return {"confidence_score": None, "critique_notes": "critique parse error"}
+    return {"confidence_score": score, "critique_notes": notes}
 
 
 # ---- repair / clarify -------------------------------------------------------
@@ -458,6 +656,12 @@ def finalize_node(state: CompileState) -> dict[str, Any]:  # noqa: D401
         plan.rejection_reasons = ["no plan produced"]
     else:
         plan.status = MissionStatus.READY_FOR_APPROVAL
+
+    # Stamp critique fields (if any) onto the plan for the response/UI.
+    if "confidence_score" in state:
+        plan.confidence_score = state.get("confidence_score")
+    if state.get("critique_notes"):
+        plan.critique_notes = state["critique_notes"]
 
     # Record plan-shape metrics only for plans that actually flew through the
     # planner (skip NEEDS_CLARIFICATION/REJECTED-from-intake — those have no

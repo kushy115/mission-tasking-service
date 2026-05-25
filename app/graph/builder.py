@@ -24,6 +24,7 @@ from langgraph.graph import END, START, StateGraph
 from app.config import get_settings
 from app.graph.nodes import (
     clarify_node,
+    critique_node,
     finalize_node,
     intake_node,
     plan_node,
@@ -52,6 +53,8 @@ def _after_validate(state: CompileState) -> str:
     A plan that the agent itself marked NEEDS_CLARIFICATION or REJECTED is
     surfaced directly. Otherwise, if there are violations and we have repair
     budget, loop. If repair budget is exhausted, reject.
+
+    Successful plans go through `critique` (advisory) before `finalize`.
     """
     settings = get_settings()
     raw = state.get("draft_plan") or {}
@@ -63,7 +66,7 @@ def _after_validate(state: CompileState) -> str:
 
     errors = state.get("validation_errors") or []
     if not errors:
-        return "finalize"
+        return "critique"
 
     if state.get("repair_attempts", 0) >= settings.repair_loop_cap:
         return "reject"
@@ -82,6 +85,7 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g.add_node("intake", intake_node)
     g.add_node("plan", plan_node)
     g.add_node("validate", validate_node)
+    g.add_node("critique", critique_node)
     g.add_node("repair", repair_node)
     g.add_node("clarify", clarify_node)
     g.add_node("reject", reject_node)
@@ -96,12 +100,13 @@ def build_graph(checkpointer: Any | None = None) -> Any:
         "validate",
         _after_validate,
         {
-            "finalize": "finalize",
+            "critique": "critique",
             "repair": "repair",
             "clarify": "clarify",
             "reject": "reject",
         },
     )
+    g.add_edge("critique", "finalize")
     g.add_edge("repair", "plan")
     g.add_edge("clarify", "finalize")
     g.add_edge("reject", "finalize")

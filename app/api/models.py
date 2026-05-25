@@ -22,6 +22,14 @@ class CompileRequest(BaseModel):
     operator_clearance: str = Field("STANDARD", description="Auth level for safety gates")
     drone_state: DroneState
     request_id: str | None = Field(None, description="Client-supplied idempotency key")
+    alternatives: bool = Field(
+        False,
+        description="If true, the planner emits 2–3 alternative plans (see DESIGN_DECISIONS §7).",
+    )
+    drone_ids: list[str] | None = Field(
+        None,
+        description="If set, compile a multi-drone group plan, one per id (see DESIGN_DECISIONS §9).",
+    )
 
 
 class CompileResponse(BaseModel):
@@ -30,6 +38,11 @@ class CompileResponse(BaseModel):
     plan: MissionPlan
     repair_loops: int = 0
     awaiting_approval: bool = False
+    # Extra alternatives (besides `plan`) for the operator to choose from.
+    # Each alternative has already passed the safety kernel.
+    alternatives: list[MissionPlan] = Field(default_factory=list)
+    # Multi-drone group response (one entry per drone_id; otherwise empty).
+    group_plans: list[MissionPlan] = Field(default_factory=list)
 
 
 class ApprovalRequest(BaseModel):
@@ -50,3 +63,22 @@ class VerifyResponse(BaseModel):
     actual_duration_s: float
     actual_battery_pct: float
     deviations: list[str]
+
+
+class AreaUpsertRequest(BaseModel):
+    """Request body for POST /v1/areas — upserts an operating area drawn in the UI."""
+
+    area_id: str = Field(..., min_length=1, max_length=64)
+    boundary: dict = Field(..., description="GeoJSON Polygon")
+    nfzs: list[dict] = Field(default_factory=list, description="GeoJSON Polygons")
+    ceiling_m: float = Field(120.0, gt=0.0, le=500.0)
+    home_lon: float = Field(..., ge=-180.0, le=180.0)
+    home_lat: float = Field(..., ge=-90.0, le=90.0)
+
+
+class AreaUpsertResponse(BaseModel):
+    area_id: str
+    home_lon: float
+    home_lat: float
+    nfz_count: int
+    home_was_snapped: bool
