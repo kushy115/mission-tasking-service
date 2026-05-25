@@ -989,6 +989,7 @@ window.addEventListener('DOMContentLoaded', () => {
       html += `<div class="actions">
         <button class="btn btn-ok" id="approve">✓ Approve</button>
         <button class="btn btn-ghost" id="verify">Verify (sim)</button>
+        <button class="btn btn-ghost" id="live-sim">▶ Live sim</button>
         <button class="btn btn-danger" id="reject">Reject</button>
       </div>`;
     }
@@ -1012,6 +1013,7 @@ window.addEventListener('DOMContentLoaded', () => {
     $('approve')?.addEventListener('click', () => submitApproval(true));
     $('reject')?.addEventListener('click', () => submitApproval(false));
     $('verify')?.addEventListener('click', runVerify);
+    $('live-sim')?.addEventListener('click', startLiveSim);
 
     document.querySelectorAll('.alt-chip').forEach(chip =>
       chip.addEventListener('click', () => {
@@ -1049,6 +1051,88 @@ window.addEventListener('DOMContentLoaded', () => {
       note.textContent = 'Approval failed: ' + e.message;
       resultEl.appendChild(note);
     }
+  }
+
+  // ----- live simulation (websocket telemetry)
+  let liveSim = null;  // { ws, marker, trail, panel }
+
+  function stopLiveSim(reason) {
+    if (!liveSim) return;
+    try { liveSim.ws.close(); } catch (_) {}
+    if (liveSim.marker) map.removeLayer(liveSim.marker);
+    if (liveSim.trail) map.removeLayer(liveSim.trail);
+    if (liveSim.panel) liveSim.panel.remove();
+    liveSim = null;
+  }
+
+  function startLiveSim() {
+    if (!currentPlan || !currentPlan.legs?.length) return;
+    if (liveSim) stopLiveSim();
+
+    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${wsProto}//${location.host}/ws/missions/${encodeURIComponent(currentPlan.mission_id)}/sim?speed=10`;
+    const ws = new WebSocket(url);
+
+    // Live drone marker (pulsing) + trail polyline being drawn as frames arrive
+    const marker = L.circleMarker([0, 0], {
+      radius: 8, color: '#fff', fillColor: '#5b9bff', fillOpacity: 1, weight: 3,
+    });
+    const trail = L.polyline([], { color: '#5b9bff', weight: 4, opacity: 0.8 });
+
+    // Floating panel with live telemetry numbers
+    const panel = document.createElement('div');
+    panel.style.cssText = `
+      position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+      background: rgba(17, 23, 38, 0.95); backdrop-filter: blur(10px);
+      border: 1px solid var(--accent); border-radius: var(--radius);
+      padding: 10px 16px; z-index: 1100; min-width: 380px;
+      box-shadow: var(--shadow-2); font-size: 12px;
+      display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;
+    `;
+    panel.innerHTML = `
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Status</div><div id="sim-status" style="color:var(--accent); font-weight:600;">connecting…</div></div>
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Elapsed</div><div id="sim-t" style="font-family:'JetBrains Mono',monospace;">0.0s</div></div>
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Altitude</div><div id="sim-alt" style="font-family:'JetBrains Mono',monospace;">— m</div></div>
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Battery</div><div id="sim-bat" style="font-family:'JetBrains Mono',monospace;">—%</div></div>
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Leg</div><div id="sim-leg" style="font-family:'JetBrains Mono',monospace;">—</div></div>
+    `;
+    document.querySelector('.map-wrap').appendChild(panel);
+    liveSim = { ws, marker, trail, panel };
+
+    ws.onopen = () => { panel.querySelector('#sim-status').textContent = 'flying'; };
+    ws.onerror = () => { panel.querySelector('#sim-status').textContent = 'ws error'; panel.querySelector('#sim-status').style.color = 'var(--err)'; };
+    ws.onclose = () => { /* terminal frame handles status text */ };
+
+    ws.onmessage = (evt) => {
+      const f = JSON.parse(evt.data);
+      if (f.error) { panel.querySelector('#sim-status').textContent = f.error; return; }
+      const ll = [f.lat, f.lon];
+      // Lazy-add layers once we have a real position
+      if (!marker._added) { marker.addTo(map); trail.addTo(map); marker._added = true; }
+      marker.setLatLng(ll);
+      trail.addLatLng(ll);
+
+      panel.querySelector('#sim-t').textContent   = `${f.t.toFixed(1)}s`;
+      panel.querySelector('#sim-alt').textContent = `${f.alt_m.toFixed(0)} m`;
+      panel.querySelector('#sim-bat').textContent = `${f.battery_pct.toFixed(1)}%`;
+      panel.querySelector('#sim-leg').textContent = `${f.leg_idx + 1} (${f.leg_type})`;
+
+      const sBat = panel.querySelector('#sim-bat');
+      sBat.style.color = f.battery_pct < 20 ? 'var(--err)' : (f.battery_pct < 35 ? 'var(--warn)' : 'var(--fg)');
+
+      if (f.status !== 'flying') {
+        const statusEl = panel.querySelector('#sim-status');
+        statusEl.textContent = f.status;
+        statusEl.style.color = f.status === 'done' ? 'var(--ok)' : 'var(--err)';
+        if (f.detail) statusEl.title = f.detail;
+        // auto-close after a short pause so the operator can see the final state
+        setTimeout(() => stopLiveSim('done'), 5000);
+      }
+    };
+
+    // Esc cancels
+    const escHandler = (e) => { if (e.key === 'Escape') { stopLiveSim('esc'); document.removeEventListener('keydown', escHandler); } };
+    document.addEventListener('keydown', escHandler);
   }
 
   async function runVerify() {

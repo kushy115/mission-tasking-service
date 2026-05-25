@@ -14,7 +14,7 @@ from typing import AsyncIterator
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -76,6 +76,44 @@ def create_app() -> FastAPI:
     @app.get("/metrics")
     def metrics() -> Response:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+    @app.websocket("/ws/missions/{mission_id}/sim")
+    async def mission_sim_socket(websocket: WebSocket, mission_id: str, speed: float = 10.0):
+        """Live telemetry stream for a saved mission. See DESIGN_DECISIONS §10."""
+        from app.geo.store import get_engine, load_drone_profile, load_geo_context, load_mission
+        from app.schemas.plan import MissionPlan
+        from app.sim.stream import telemetry_stream
+
+        await websocket.accept()
+        try:
+            raw = load_mission(get_engine(), mission_id)
+            if raw is None:
+                await websocket.send_json({"error": f"mission {mission_id} not found"})
+                await websocket.close()
+                return
+            plan = MissionPlan.model_validate(raw)
+            # Production would persist the drone profile with the plan; for the
+            # demo we use the long-endurance default.
+            profile = load_drone_profile(get_engine(), "long-endurance-quad")
+            try:
+                geo = load_geo_context(get_engine(), plan.area_id)
+            except Exception:  # noqa: BLE001
+                geo = None
+            speed = max(0.5, min(float(speed or 10.0), 100.0))
+            async for frame in telemetry_stream(plan, profile, geo, speed=speed):
+                try:
+                    await websocket.send_json(frame.to_dict())
+                except Exception:  # noqa: BLE001
+                    # Backpressure or client disconnect: drop and stop.
+                    log.info("ws sim stream send failed; closing")
+                    return
+        except WebSocketDisconnect:
+            log.info("ws sim stream client disconnected")
+        finally:
+            try:
+                await websocket.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     # Single-page UI for compiling missions in a browser.
     # Lives in app/static/index.html; the file gets copied into the Docker
