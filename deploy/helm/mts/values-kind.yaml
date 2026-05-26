@@ -1,0 +1,45 @@
+# Override file for the kind dev cluster (`helm install -f values-kind.yaml`).
+#
+# Why a separate file: production defaults in values.yaml assume real
+# infrastructure (Prometheus Adapter for HPA, nginx-ingress for Ingress,
+# multiple pods for PDB, an otel-collector in the observability namespace).
+# kind has none of that. This file degrades all of them to local-runnable
+# equivalents so `helm install` is reproducible end-to-end.
+
+image:
+  repository: mts
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent  # rely on `kind load docker-image`
+
+# One replica is fine for local; HPA / PDB are off below.
+replicaCount: 1
+
+autoscaling:
+  enabled: false  # no Prometheus Adapter in kind
+pdb:
+  enabled: false  # PDB requires multiple replicas
+ingress:
+  enabled: false  # no nginx-ingress; use `kubectl port-forward` instead
+
+config:
+  MTS_ENV: kind
+  MTS_LOG_LEVEL: INFO
+  MTS_LLM_PROVIDER: anthropic
+  MTS_LLM_MODEL: claude-haiku-4-5
+  MTS_REPAIR_LOOP_CAP: "3"
+  MTS_BATTERY_RESERVE_MIN_PCT: "20.0"
+  MTS_MIN_AGL_M: "20.0"
+  # OTEL exporter is a no-op when there's no collector at the endpoint, but
+  # disabling it explicitly silences startup retries.
+  OTEL_TRACES_EXPORTER: "none"
+  OTEL_SERVICE_NAME: mission-tasking-service
+  LANGSMITH_TRACING: "true"
+  LANGSMITH_PROJECT: mts-kind
+
+# Secrets passed at install time via `--set-string secrets.API_KEY=…`. Empty
+# placeholders here mean the chart still renders cleanly with `helm template`.
+secrets:
+  API_KEY: ""
+  LANGSMITH_API_KEY: ""
+  MTS_DATABASE_URL: "postgresql+psycopg://mts:mts@postgres:5432/mts"
+  MTS_CHECKPOINT_DATABASE_URL: "postgresql://mts:mts@postgres:5432/mts"

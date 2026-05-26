@@ -143,14 +143,20 @@ def _sensor_coverage_ok(plan: MissionPlan, profile: DroneProfile) -> tuple[bool,
             continue
         min_alt = min(wp.alt_m for wp in leg.geometry)
         swath = sensor_swath_m(sensor, min_alt)
-        # Estimate track spacing: average distance between every other consecutive
-        # waypoint pair (the perpendicular hop between adjacent tracks).
-        # This is a rough but principled measure for a serpentine.
+        # Estimate track spacing on a serpentine geometry of the form:
+        #   [W0=(W,lat0), W1=(E,lat0),   # track 1 — along-track hop
+        #    W2=(E,lat1), W3=(W,lat1),   # track 2 — along-track hop
+        #    ...]
+        # The *along-track* hops are W0→W1, W2→W3, … at EVEN indices.
+        # The *perpendicular* track-to-track hops are W1→W2, W3→W4, … at ODD
+        # indices — those are what we want for spacing. Previous version used
+        # range(0, …, 2) which measured the along-track length and falsely
+        # rejected every deterministically-generated lawnmower. See DD-010.
         from app.validation.physics import haversine_m
 
         hops = [
             haversine_m(leg.geometry[i], leg.geometry[i + 1])
-            for i in range(0, len(leg.geometry) - 1, 2)
+            for i in range(1, len(leg.geometry) - 1, 2)
         ]
         if not hops:
             continue

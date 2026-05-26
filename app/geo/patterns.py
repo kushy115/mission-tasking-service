@@ -55,6 +55,41 @@ def lawnmower(
     return points
 
 
+def lawnmower_fit_to_boundary(
+    boundary: "Polygon",  # noqa: F821 — shapely Polygon, deferred import
+    altitude_m: float,
+    swath_m: float,
+    spacing_factor: float = 0.85,
+    inset_factor: float = 0.30,
+) -> list[Waypoint]:
+    """Lay out a lawnmower pattern that fits the boundary's bbox at `altitude_m`.
+
+    Track spacing is `spacing_factor * swath_m` (default 85% — leaves a safety
+    margin so the kernel's coverage check passes). The bbox is inset by
+    `inset_factor * swath_m` on each side so the tracks stay safely inside the
+    boundary polygon (cheap proxy for proper polygon-clipped pattern fill).
+
+    This is the deterministic counterpart that lets the LLM pick the pattern
+    while the geometry is generated correctly. See DESIGN_DECISIONS §10.
+    """
+    minx, miny, maxx, maxy = boundary.bounds
+    inset_lon = (swath_m * inset_factor) / _meters_per_deg_lon((miny + maxy) / 2)
+    inset_lat = (swath_m * inset_factor) / METERS_PER_DEG_LAT
+    minx += inset_lon
+    maxx -= inset_lon
+    miny += inset_lat
+    maxy -= inset_lat
+    if minx >= maxx or miny >= maxy:
+        # Boundary too narrow to inset — degrade gracefully with a tiny pattern.
+        minx, miny, maxx, maxy = boundary.bounds
+    width_m = (maxx - minx) * _meters_per_deg_lon((miny + maxy) / 2)
+    height_m = (maxy - miny) * METERS_PER_DEG_LAT
+    center_lat = (miny + maxy) / 2
+    center_lon = (minx + maxx) / 2
+    spacing_m = max(10.0, swath_m * spacing_factor)
+    return lawnmower(center_lat, center_lon, width_m, height_m, spacing_m, altitude_m)
+
+
 def expanding_square(
     center_lat: float,
     center_lon: float,

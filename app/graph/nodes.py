@@ -401,6 +401,65 @@ def plan_node(state: CompileState) -> dict[str, Any]:
             "draft_plan": None,
             "validation_errors": [f"plan failed schema: {e}"],
         }
+
+    # ----- DD-010: deterministic geometry for SEARCH_PATTERN legs.
+    #
+    # The LLM is unreliable at producing correctly-spaced search patterns: it
+    # writes confident reasoning ("16 parallel tracks at 60m spacing") but
+    # emits only the 4 corner waypoints, leaving the kernel's coverage check
+    # to reject the plan ("track spacing 622.7m exceeds sensor swath 75m").
+    # Fix: keep the LLM's choices (pattern_name, altitude, sensor_mode) but
+    # REPLACE the geometry with a deterministically-generated lawnmower fitted
+    # to the area boundary at the appropriate spacing.
+    try:
+        from shapely.geometry import Polygon as _SPoly
+        from app.geo.patterns import lawnmower_fit_to_boundary
+        from app.schemas.enums import LegType as _LT, SensorMode as _SM
+        from app.validation.physics import sensor_swath_m, estimate_leg
+
+        boundary_coords = geo["boundary_lonlat"]
+        boundary_poly = _SPoly(boundary_coords)
+        drone_id = state["drone_state"]["drone_profile_id"]
+        profile = load_drone_profile(get_engine(), drone_id)
+
+        def _pick_sensor(mode_str: str | None):
+            target = (mode_str or "EO").upper()
+            for s in profile.sensors:
+                if s.mode.value == target:
+                    return s
+            return profile.sensors[0] if profile.sensors else None
+
+        for leg_idx, leg in enumerate(structured.legs):
+            if leg.leg_type != _LT.SEARCH_PATTERN:
+                continue
+            sensor = _pick_sensor(leg.sensor_mode.value if leg.sensor_mode else None)
+            if sensor is None:
+                continue
+            alt = leg.geometry[0].alt_m if leg.geometry else 60.0
+            swath = sensor_swath_m(sensor, alt)
+            new_pts = lawnmower_fit_to_boundary(boundary_poly, alt, swath)
+            if not new_pts:
+                continue
+            leg.geometry = new_pts
+            # Recompute leg duration/battery from the new geometry so the kernel's
+            # endurance/battery checks line up with what we'll actually fly.
+            energy = estimate_leg(leg, profile)
+            leg.est_duration_s = energy.duration_s
+            leg.est_battery_pct = energy.battery_pct
+            log.info(
+                "densified SEARCH_PATTERN leg[%d]: %d waypoints @ %.1fm spacing (swath=%.1fm)",
+                leg_idx, len(new_pts), swath * 0.85, swath,
+            )
+
+        # Re-aggregate total_duration / total_battery if we changed anything.
+        if any(l.leg_type == _LT.SEARCH_PATTERN for l in structured.legs):
+            structured.total_duration_s = sum(l.est_duration_s for l in structured.legs)
+            structured.total_battery_pct = sum(l.est_battery_pct for l in structured.legs)
+            starting_pct = float(state.get("drone_state", {}).get("battery_pct", 100.0))
+            structured.battery_reserve_pct = starting_pct - structured.total_battery_pct
+    except Exception as e:  # noqa: BLE001 — densification is best-effort
+        log.warning("search-pattern densification skipped: %s", e)
+
     out = {"draft_plan": structured.model_dump()}
     if raw_alternatives:
         # Stash raw alternative dicts; validate_node will filter and convert.

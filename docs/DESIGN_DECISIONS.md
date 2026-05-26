@@ -594,3 +594,135 @@ plumb through `app/geo/store.py:AREA_LFU_CAP` if it needs tuning.
 `app/api/routes.py` (eviction call in `upsert_area_endpoint`, access bump
 in `compile_mission`), `app/static/index.html` (`area-foot` shows
 `N/10 user · M protected`).
+
+---
+
+## DD-010 — Deterministic search-pattern geometry (LLM picks, code lays out)
+
+**Decision.** When the planner emits a `SEARCH_PATTERN` leg, `plan_node`
+discards the LLM-generated waypoints and replaces them with a
+deterministically-generated lawnmower pattern (`lawnmower_fit_to_boundary`
+in `app/geo/patterns.py`) fitted to the area boundary at the chosen
+altitude, with track spacing = 85 % of the sensor swath. The LLM still picks
+the *pattern* (lawnmower / expanding-square / sector), the *altitude*, and
+the *sensor*; the code computes the *geometry*. Each densified leg's
+`est_duration_s` and `est_battery_pct` are recomputed via
+`physics.estimate_leg`, and the plan totals are re-aggregated.
+
+**Why.** Observed failure: the LLM wrote confident reasoning ("16 parallel
+north–south tracks spaced 60 m apart") but emitted only 2–4 waypoints —
+the corners of the area — leaving the kernel's coverage check to reject the
+plan with `track spacing 622.7m exceeds sensor swath 75.0m`. The LLM is
+unreliable at counting and laying out parallel tracks; the deterministic
+generator already existed (`patterns.py`) but wasn't being invoked because
+DD-001 had removed the agent + tool-calling pattern. This change re-introduces
+the deterministic geometry without restoring the slow, brittle agent loop:
+the LLM does its one structured-output call, and *after* it returns we patch
+the geometry in pure Python.
+
+**Trade-off.** The lawnmower is fitted to the boundary's bounding box (inset
+by 30 % of the swath), not the polygon itself. For non-rectangular areas
+(e.g. the `farmland-complex` L-shape) some tracks will extend slightly
+beyond the polygon's interior — the kernel's `_waypoints_inside` check then
+rejects those, which the repair loop fixes by asking the LLM to choose a
+smaller search subregion. A proper polygon-clipped pattern fill (split the
+polygon into convex sub-regions, lawnmower each) is a follow-up. We also
+ignore `bearing_deg` for now — east-aligned tracks only. The LLM's
+`reasoning_trace` is preserved as-is, so it may still claim "16 passes"
+when the code actually drew, say, 12 — minor cosmetic dissonance the
+operator should disregard.
+
+**Where in code.** `app/geo/patterns.py` (`lawnmower_fit_to_boundary`),
+`app/graph/nodes.py` (post-processing block at the end of `plan_node`
+between `model_validate` and the return statement).
+
+---
+
+## DD-011 — Local kind cluster as the reproducible k8s harness
+
+**Decision.** The Helm chart ships with a `values-kind.yaml` override file and a
+sibling `deploy/k8s/postgres-redis.yaml` manifest. Standing the stack up locally
+is a five-command sequence:
+
+```bash
+docker tag docker-mts:latest mts:0.1.0
+kind create cluster --name mts
+kind load docker-image mts:0.1.0 --name mts
+kubectl apply -f deploy/k8s/postgres-redis.yaml
+helm install mts deploy/helm/mts/ -f deploy/helm/mts/values-kind.yaml \
+  --set-string secrets.API_KEY="$(grep '^API_KEY=' .env | cut -d= -f2-)" \
+  --set-string secrets.LANGSMITH_API_KEY="$(grep '^LANGSMITH_API_KEY=' .env | cut -d= -f2-)"
+kubectl exec deploy/mts -- python -m scripts.seed_db
+kubectl port-forward svc/mts 8001:80
+```
+
+**Why.** The Helm chart was authored per `CLAUDE.md §13` but had never been
+exercised end-to-end. Standing it up against `kind` gives us the production
+deployment story (Deployment + Service + ConfigMap + Secret + probes + HPA
+template + PDB + CronJob) on a single laptop, without paying for cloud
+infrastructure. The chart's production defaults (replicas=3, HPA on
+concurrency, nginx Ingress, PDB minAvailable=2) all assume things kind doesn't
+have, so a separate `values-kind.yaml` degrades them to local-runnable
+equivalents — *and that file becomes part of the chart's documentation*: every
+override is annotated with the reason it's safe to drop in dev.
+
+**Trade-offs.**
+- **In-cluster Postgres + Redis are bare-manifest, not bitnami sub-charts.**
+  Trades chart cleanliness for zero-network reproducibility — no
+  `helm dependency update`, no internet pulls, just one `kubectl apply`. The
+  real swap-point is the chart's `secrets.MTS_DATABASE_URL`; pointing it at
+  RDS / Cloud SQL is a one-line change.
+- **HPA / Ingress / PDB disabled in kind.** HPA needs Prometheus Adapter +
+  custom metrics; Ingress needs nginx-ingress-controller; PDB needs >1
+  replica. All are real-prod concerns. Use `kubectl port-forward svc/mts 8001:80`
+  instead of Ingress; the HPA template still renders so reviewers can audit it.
+- **`enableServiceLinks: false` is mandatory.** Kubernetes auto-injects
+  `{SERVICE}_HOST` and `{SERVICE}_PORT` env vars for every service in the
+  namespace using the legacy Docker-link format
+  (`MTS_PORT=tcp://10.96.x.x:80`). pydantic-settings then tries to coerce
+  that to an `int` for our `MTS_PORT` field and crashes the pod on startup.
+  Disabling service links is the canonical fix; we set it on the pod spec
+  inside `templates/deployment.yaml` so it survives every upgrade.
+- **Migrations run via `kubectl exec` after install.** `init_schema` only
+  runs from `scripts/seed_db.py`; not yet wired as a Helm pre-install hook
+  Job. For local reproducibility that's fine; for CI we'd promote it.
+
+**Where in code.** `deploy/helm/mts/values-kind.yaml` (kind-specific
+overrides + inline justification), `deploy/helm/mts/templates/deployment.yaml`
+(`enableServiceLinks: false`), `deploy/k8s/postgres-redis.yaml` (minimal
+in-cluster Postgres + Redis), README "Local kind cluster" section.
+
+---
+
+## DD-012 — MCP servers wired into the dev workflow
+
+**Decision.** Three MCP servers are registered in the local Claude Code config
+(`~/.claude.json` under this project):
+
+- **Playwright** (`@playwright/mcp@latest`) — browser automation. Lets the
+  agent navigate the live UI at `http://localhost:8000/`, take screenshots,
+  click elements, and reproduce reported UI bugs without the operator having
+  to describe them step-by-step.
+- **Postgres** (`@modelcontextprotocol/server-postgres`) — direct query
+  access to the `missions`, `areas`, `drones` tables. Replaces the previous
+  `docker exec docker-postgres-1 psql ...` pattern. Read-only by default in
+  the official server, which is the right safety bias for an agent that's
+  inspecting state rather than mutating it.
+- **GitHub** (`@modelcontextprotocol/server-github`) — PR / issue / branch
+  management without shelling out to `gh`. Requires a Personal Access Token
+  in `GITHUB_PERSONAL_ACCESS_TOKEN` (set via `claude mcp` env config).
+
+**Why.** Each MCP shortens a class of operation that used to take 3-5 shell
+commands into a single structured tool call. The agent saves context window;
+the operator gets faster turnaround. None of them changes the runtime — they
+only change how the agent inspects / drives it.
+
+**Trade-offs.** All three run as stdio subprocesses spawned by Claude Code;
+their config lives in `~/.claude.json` which is gitignored. Reproducing the
+setup on another machine requires running the three `claude mcp add` commands
+again — documented in the README. The GitHub MCP needs a token; the
+Playwright MCP needs npx (Node.js) on PATH; Postgres MCP needs the DB
+reachable from the host (port-forward when running under k8s).
+
+**Where in code.** Not in the repo — MCP config is per-developer machine
+state. Install commands captured in README "Developer MCP setup" section.

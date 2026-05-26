@@ -127,15 +127,53 @@ Open Grafana at [http://localhost:3000](http://localhost:3000) (admin/admin) and
 
 ## Kubernetes (kind)
 
-```sh
-kind create cluster
-docker build -t mts:0.1.0 -f deploy/docker/Dockerfile .
-kind load docker-image mts:0.1.0
+End-to-end local cluster — Postgres + Redis + MTS + probes + Helm chart. See
+`docs/DESIGN_DECISIONS.md` DD-011 for the rationale behind each step.
 
+```sh
+# 0. one-time deps
+brew install helm kind
+
+# 1. tag the docker-compose image so it matches the chart, then create the cluster
+docker tag docker-mts:latest mts:0.1.0
+kind create cluster --name mts
+kind load docker-image mts:0.1.0 --name mts
+
+# 2. in-cluster Postgres (with PostGIS) + Redis
+kubectl apply -f deploy/k8s/postgres-redis.yaml
+kubectl wait --for=condition=ready pod -l app=postgres --timeout=120s
+
+# 3. install MTS via Helm with the kind override file
 helm install mts deploy/helm/mts/ \
-  --set image.tag=0.1.0 \
-  --set secrets.API_KEY=$API_KEY
+  -f deploy/helm/mts/values-kind.yaml \
+  --set-string secrets.API_KEY="$(grep '^API_KEY=' .env | cut -d= -f2-)" \
+  --set-string secrets.LANGSMITH_API_KEY="$(grep '^LANGSMITH_API_KEY=' .env | cut -d= -f2-)"
+
+# 4. seed the in-cluster Postgres (init_schema + data files)
+kubectl exec deploy/mts -- python -m scripts.seed_db
+
+# 5. open the UI
+kubectl port-forward svc/mts 8001:80
+# → http://localhost:8001
 ```
+
+## Developer MCP setup
+
+Three MCP servers shorten the agent's loop — install once per machine (see
+DD-012):
+
+```sh
+claude mcp add playwright -- npx '@playwright/mcp@latest'
+claude mcp add postgres   -- npx -y '@modelcontextprotocol/server-postgres' \
+  'postgresql://mts:mts@localhost:5432/mts'
+claude mcp add github     -- npx -y '@modelcontextprotocol/server-github'
+
+# GitHub MCP needs a Personal Access Token — set via env after add:
+#   edit ~/.claude.json under this project's mcpServers.github.env and add
+#   "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..."
+```
+
+Restart Claude Code (`/exit` then re-launch) after installing.
 
 ### Why these chart choices
 

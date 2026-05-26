@@ -11,6 +11,11 @@ spec:
     metadata:
       labels: { app: mts }
     spec:
+      # Kubernetes auto-injects {SERVICE}_HOST / {SERVICE}_PORT env vars for
+      # every service in the namespace. The `mts` service name collides with
+      # our own MTS_PORT pydantic-settings int field — disable the legacy
+      # service-links to keep our env namespace clean. See DD-011.
+      enableServiceLinks: false
       containers:
         - name: mts
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
