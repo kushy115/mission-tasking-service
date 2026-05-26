@@ -11,12 +11,15 @@ from fastapi.responses import Response
 from sqlalchemy import text
 
 from app.api.models import (
+    AreaResearchRequest,
+    AreaResearchResponse,
     AreaUpsertRequest,
     AreaUpsertResponse,
     ApprovalRequest,
     ApprovalResponse,
     CompileRequest,
     CompileResponse,
+    DroneUpsertRequest,
     VerifyResponse,
 )
 from app.export import EXPORT_FORMATS, render_export
@@ -118,6 +121,14 @@ def upsert_area_endpoint(req: AreaUpsertRequest) -> AreaUpsertResponse:
             ],
         ],
     }
+    # LFU cap: evict the least-used non-protected area BEFORE inserting the new
+    # one so we never exceed AREA_LFU_CAP. Protected (seeded) areas are immune.
+    # See DESIGN_DECISIONS §8.
+    from app.geo.store import evict_lfu_area_if_needed
+    evicted = evict_lfu_area_if_needed(get_engine(), exclude_area_id=req.area_id)
+    if evicted:
+        log.info("LFU evicted area %r to make room for %r", evicted, req.area_id)
+
     upsert_area(get_engine(), req.area_id, fc, req.ceiling_m)
     return AreaUpsertResponse(
         area_id=req.area_id,
@@ -140,6 +151,82 @@ def delete_area_endpoint(area_id: str) -> dict[str, Any]:
 def list_drones_endpoint() -> list[dict]:
     """Return all drone profiles. Used by the UI."""
     return list_drones(get_engine())
+
+
+@router.post("/v1/drones")
+def upsert_drone_endpoint(req: DroneUpsertRequest) -> dict[str, Any]:
+    """Operator-authored drone profile (DD-006). Upserts into the drones table."""
+    from app.geo.store import upsert_drone
+    profile = req.model_dump(exclude={"profile_id"})
+    upsert_drone(get_engine(), req.profile_id, profile)
+    return {"profile_id": req.profile_id, "saved": True}
+
+
+@router.post("/v1/areas:research", response_model=AreaResearchResponse)
+def research_area_endpoint(req: AreaResearchRequest) -> AreaResearchResponse:
+    """LLM-driven area research (DD-007). Returns suggested NFZs + ceiling + advisory note.
+
+    The polygon is sent to the planner LLM with a structured-output schema so
+    we get JSON back, not prose. Output is ADVISORY — the operator can edit
+    every field before saving the area. The deterministic kernel then becomes
+    the source of truth at compile time, as usual.
+    """
+    from app.graph.nodes import _llm_lazy
+    import json as _json
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    try:
+        coords = req.boundary.get("coordinates", [[]])[0]
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"bad boundary: {e}") from e
+
+    system = (
+        "You are an airspace-advisory assistant. Given a polygon (lon/lat) and a "
+        "home point, return ADVISORY guidance about likely flight restrictions in "
+        "that area as a single JSON object — no prose, no markdown. Schema:\n"
+        '{ "flight_permitted": <bool>, '
+        '  "ceiling_m": <float between 50 and 400>, '
+        '  "suggested_nfzs": [<GeoJSON Polygon geometry>, ...], '
+        '  "notes": "<1-3 sentences explaining the choices>" }\n'
+        "Suggested NFZs should be plausible obstacles inside the boundary (e.g. "
+        "buildings, runways, towers) drawn as small polygons in lon/lat. If you "
+        "cannot identify anything specific, return an empty list. Be CONSERVATIVE: "
+        "if the area looks like it might be near an airport or restricted airspace, "
+        "set flight_permitted=false."
+    )
+    user = (
+        f"Boundary vertices (lon,lat): {coords}\n"
+        f"Home point (lon,lat): {req.home_lon},{req.home_lat}\n"
+        "Return ONE JSON object matching the schema."
+    )
+    try:
+        ai = _llm_lazy().invoke([SystemMessage(content=system), HumanMessage(content=user)])
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"LLM unavailable: {e}") from e
+    raw = ai.content if hasattr(ai, "content") else str(ai)
+    # Strip ```json fences and pull the first {...} blob.
+    s = raw.strip()
+    if s.startswith("```"):
+        s = s.split("```", 2)[1].lstrip()
+        if s.startswith("json"):
+            s = s[4:]
+    start, end = s.find("{"), s.rfind("}")
+    blob = s[start : end + 1] if 0 <= start < end else raw
+    try:
+        data = _json.loads(blob)
+    except Exception as e:  # noqa: BLE001
+        log.warning("research JSON parse failed: %s; raw=%r", e, raw[:300])
+        # Degrade gracefully — return a safe-ish default so the UI doesn't dead-end.
+        data = {
+            "flight_permitted": True, "ceiling_m": 120.0, "suggested_nfzs": [],
+            "notes": "LLM response could not be parsed; using defaults.",
+        }
+    return AreaResearchResponse(
+        flight_permitted=bool(data.get("flight_permitted", True)),
+        ceiling_m=float(data.get("ceiling_m", 120.0)),
+        suggested_nfzs=list(data.get("suggested_nfzs", [])),
+        notes=str(data.get("notes", "")),
+    )
 
 
 @router.get("/v1/missions")
@@ -180,6 +267,7 @@ def _invoke_compile_graph(
     request_id: str | None,
     alternatives_requested: bool,
     multi_drone_slot: dict | None = None,
+    conversation_history: list[dict] | None = None,
 ) -> dict:
     """One graph invocation for one drone. Returns the final state dict."""
     thread_id = (request_id or str(uuid.uuid4())) + (
@@ -196,6 +284,7 @@ def _invoke_compile_graph(
         "repair_attempts": 0,
         "alternatives_requested": alternatives_requested,
         "multi_drone_slot": multi_drone_slot,
+        "conversation_history": conversation_history or [],
     }
     with COMPILE_DURATION.time():
         return graph.invoke(initial_state, config=config)
@@ -272,7 +361,14 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
             drone_state=req.drone_state.model_dump(),
             request_id=req.request_id,
             alternatives_requested=bool(req.alternatives),
+            conversation_history=req.conversation_history or None,
         )
+        # LFU bookkeeping: count this access on the area (DD-008).
+        try:
+            from app.geo.store import touch_area_access
+            touch_area_access(get_engine(), req.area_id)
+        except Exception:  # noqa: BLE001
+            pass
     except Exception as e:  # noqa: BLE001
         COMPILE_REQUESTS.labels(status="error").inc()
         log.exception("compile graph raised: %s", e)

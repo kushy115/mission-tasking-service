@@ -47,9 +47,21 @@ DDL = [
         boundary geometry(Polygon, 4326) NOT NULL,
         ceiling_m DOUBLE PRECISION NOT NULL,
         home_lon DOUBLE PRECISION NOT NULL,
-        home_lat DOUBLE PRECISION NOT NULL
+        home_lat DOUBLE PRECISION NOT NULL,
+        -- LFU eviction columns (DD-008). protected=TRUE shields seeded areas.
+        access_count INTEGER NOT NULL DEFAULT 0,
+        last_accessed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        protected BOOLEAN NOT NULL DEFAULT FALSE,
+        notes TEXT NOT NULL DEFAULT ''
     )
     """,
+    # Additive migrations for repos that pre-date the LFU columns.
+    "ALTER TABLE areas ADD COLUMN IF NOT EXISTS access_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE areas ADD COLUMN IF NOT EXISTS last_accessed_at TIMESTAMPTZ NOT NULL DEFAULT now()",
+    "ALTER TABLE areas ADD COLUMN IF NOT EXISTS protected BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE areas ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT ''",
+    # Mark the two seeded areas as protected so LFU never evicts them.
+    "UPDATE areas SET protected = TRUE WHERE area_id IN ('yard-simple', 'farmland-complex')",
     """
     CREATE TABLE IF NOT EXISTS nfzs (
         id SERIAL PRIMARY KEY,
@@ -62,9 +74,12 @@ DDL = [
     """
     CREATE TABLE IF NOT EXISTS drones (
         profile_id TEXT PRIMARY KEY,
-        profile JSONB NOT NULL
+        profile JSONB NOT NULL,
+        protected BOOLEAN NOT NULL DEFAULT FALSE
     )
     """,
+    "ALTER TABLE drones ADD COLUMN IF NOT EXISTS protected BOOLEAN NOT NULL DEFAULT FALSE",
+    "UPDATE drones SET protected = TRUE WHERE profile_id IN ('long-endurance-quad', 'short-endurance-quad')",
     """
     CREATE TABLE IF NOT EXISTS missions (
         mission_id TEXT PRIMARY KEY,
@@ -93,6 +108,56 @@ def init_schema(engine: Engine) -> None:
     with engine.begin() as conn:
         for stmt in DDL:
             conn.execute(text(stmt))
+
+
+# LFU cap on user-authored areas. Protected (seeded) areas don't count toward
+# the cap. See DESIGN_DECISIONS §8.
+AREA_LFU_CAP = 10
+
+
+def evict_lfu_area_if_needed(engine: Engine, exclude_area_id: str | None = None) -> str | None:
+    """If unprotected-area count >= cap, evict the LFU one. Returns evicted id."""
+    with engine.begin() as conn:
+        n = conn.execute(
+            text("SELECT COUNT(*) FROM areas WHERE protected = FALSE"
+                 + (" AND area_id <> :ex" if exclude_area_id else "")),
+            {"ex": exclude_area_id} if exclude_area_id else {},
+        ).scalar() or 0
+        if n < AREA_LFU_CAP:
+            return None
+        # Eviction key: lowest access_count, oldest last_accessed_at as tiebreak.
+        row = conn.execute(
+            text(
+                "SELECT area_id FROM areas WHERE protected = FALSE"
+                + (" AND area_id <> :ex" if exclude_area_id else "")
+                + " ORDER BY access_count ASC, last_accessed_at ASC LIMIT 1"
+            ),
+            {"ex": exclude_area_id} if exclude_area_id else {},
+        ).first()
+        if not row:
+            return None
+        victim = row[0]
+        conn.execute(text("DELETE FROM areas WHERE area_id = :a"), {"a": victim})
+        return victim
+
+
+def touch_area_access(engine: Engine, area_id: str) -> None:
+    """Bump access_count and last_accessed_at — drives the LFU eviction order."""
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE areas SET access_count = access_count + 1, "
+                "last_accessed_at = now() WHERE area_id = :a"
+            ),
+            {"a": area_id},
+        )
+
+
+def set_area_notes(engine: Engine, area_id: str, notes: str) -> None:
+    """Store the advisory note returned by the LLM-research step (DD-007)."""
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE areas SET notes = :n WHERE area_id = :a"),
+                     {"n": notes, "a": area_id})
 
 
 def upsert_area(engine: Engine, area_id: str, geojson: dict, ceiling_m: float) -> None:
@@ -364,10 +429,12 @@ def list_areas(engine: Engine) -> list[dict]:
     with engine.connect() as conn:
         rows = conn.execute(
             text(
-                "SELECT area_id, ST_AsGeoJSON(boundary), ceiling_m, home_lon, home_lat FROM areas ORDER BY area_id"
+                "SELECT area_id, ST_AsGeoJSON(boundary), ceiling_m, home_lon, home_lat, "
+                "access_count, last_accessed_at, protected, notes "
+                "FROM areas ORDER BY protected DESC, access_count DESC, area_id"
             )
         ).all()
-        for area_id, bnd_json, ceiling_m, hlon, hlat in rows:
+        for area_id, bnd_json, ceiling_m, hlon, hlat, count, last_acc, prot, notes in rows:
             nfz_rows = conn.execute(
                 text("SELECT ST_AsGeoJSON(geom) FROM nfzs WHERE area_id = :a"),
                 {"a": area_id},
@@ -380,6 +447,10 @@ def list_areas(engine: Engine) -> list[dict]:
                     "ceiling_m": float(ceiling_m),
                     "home_lon": float(hlon),
                     "home_lat": float(hlat),
+                    "access_count": int(count or 0),
+                    "last_accessed_at": last_acc.isoformat() if last_acc else None,
+                    "protected": bool(prot),
+                    "notes": notes or "",
                 }
             )
     return out
@@ -389,6 +460,6 @@ def list_drones(engine: Engine) -> list[dict]:
     """All drone profiles. Used by the UI dropdown."""
     with engine.connect() as conn:
         rows = conn.execute(
-            text("SELECT profile_id, profile FROM drones ORDER BY profile_id")
+            text("SELECT profile_id, profile, protected FROM drones ORDER BY protected DESC, profile_id")
         ).all()
-    return [{"profile_id": pid, **(profile or {})} for pid, profile in rows]
+    return [{"profile_id": pid, "protected": bool(p), **(profile or {})} for pid, profile, p in rows]

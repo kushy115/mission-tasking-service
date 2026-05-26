@@ -30,6 +30,47 @@ class CompileRequest(BaseModel):
         None,
         description="If set, compile a multi-drone group plan, one per id (see DESIGN_DECISIONS §9).",
     )
+    # Chat-style clarification thread (DD-005). When the prior compile returned
+    # NEEDS_CLARIFICATION, the UI sends the prior turns so the planner sees the
+    # full conversation, not just the latest follow-up.
+    conversation_history: list[dict] = Field(
+        default_factory=list,
+        description="Prior {role, content} turns from this clarification thread.",
+    )
+
+
+class DroneUpsertRequest(BaseModel):
+    """Operator-authored drone profile. POST /v1/drones."""
+
+    profile_id: str = Field(..., min_length=1, max_length=64)
+    rated_endurance_s: float = Field(..., gt=0)
+    cruise_speed_mps: float = Field(..., gt=0)
+    climb_rate_mps: float = Field(..., gt=0)
+    battery_wh: float = Field(..., gt=0)
+    cruise_power_w: float = Field(..., gt=0)
+    hover_power_w: float = Field(..., gt=0)
+    description: str = ""
+    sensors: list[dict] = Field(
+        default_factory=lambda: [
+            {"name": "nadir_eo", "mode": "EO", "power_w": 10.0,
+             "half_angle_deg": 30.0, "ground_resolution_at_100m": 0.04},
+        ]
+    )
+
+
+class AreaResearchRequest(BaseModel):
+    """Polygon submitted to the LLM-research endpoint (DD-007)."""
+
+    boundary: dict = Field(..., description="GeoJSON Polygon")
+    home_lon: float = Field(..., ge=-180.0, le=180.0)
+    home_lat: float = Field(..., ge=-90.0, le=90.0)
+
+
+class AreaResearchResponse(BaseModel):
+    flight_permitted: bool
+    ceiling_m: float
+    suggested_nfzs: list[dict] = Field(default_factory=list)
+    notes: str
 
 
 class CompileResponse(BaseModel):

@@ -18,28 +18,32 @@
 
   <style>
     :root {
-      --bg:        #0a0e17;
-      --bg-elev:   #111726;
-      --panel:     #161d2e;
-      --panel-2:   #1d2538;
-      --border:    #283047;
-      --border-strong: #3a4361;
-      --fg:        #e8ecf4;
-      --fg-dim:    #b8c0d4;
-      --muted:     #6f7891;
-      --accent:    #5b9bff;
-      --accent-2:  #4a87ee;
-      --accent-soft: rgba(91, 155, 255, 0.12);
-      --ok:        #4ade80;
-      --ok-soft:   rgba(74, 222, 128, 0.12);
-      --warn:      #f5c463;
-      --warn-soft: rgba(245, 196, 99, 0.12);
-      --err:       #ef6764;
-      --err-soft:  rgba(239, 103, 100, 0.12);
-      --radius:    10px;
-      --radius-sm: 6px;
-      --shadow-1:  0 1px 2px rgba(0,0,0,0.25);
-      --shadow-2:  0 8px 24px rgba(0,0,0,0.35);
+      --bg:           #07090e;
+      --surface:      rgba(20, 24, 33, 0.72);
+      --surface-2:    rgba(28, 33, 44, 0.85);
+      --surface-elev: rgba(36, 42, 56, 0.95);
+      --hairline:     rgba(255, 255, 255, 0.08);
+      --hairline-2:   rgba(255, 255, 255, 0.14);
+      --fg:           #f3f4f7;
+      --fg-dim:       #c5cad6;
+      --muted:        #8990a3;
+      --accent:       #0a84ff;
+      --accent-2:     #409cff;
+      --accent-soft:  rgba(10, 132, 255, 0.18);
+      --ok:           #30d158;
+      --ok-soft:      rgba(48, 209, 88, 0.18);
+      --warn:         #ffd60a;
+      --warn-soft:    rgba(255, 214, 10, 0.18);
+      --err:          #ff453a;
+      --err-soft:     rgba(255, 69, 58, 0.18);
+      --r-xs: 6px;
+      --r-sm: 10px;
+      --r-md: 14px;
+      --r-lg: 20px;
+      --r-xl: 28px;
+      --shadow:       0 8px 24px rgba(0,0,0,0.35), 0 2px 6px rgba(0,0,0,0.25);
+      --shadow-lg:    0 24px 64px rgba(0,0,0,0.5), 0 4px 12px rgba(0,0,0,0.3);
+      --blur:         saturate(180%) blur(28px);
     }
 
     * { box-sizing: border-box; }
@@ -47,289 +51,499 @@
       margin: 0; padding: 0; height: 100%;
       background: var(--bg); color: var(--fg);
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-      font-size: 14px; line-height: 1.5;
+      font-size: 13px; line-height: 1.5;
+      letter-spacing: -0.005em;
       font-feature-settings: 'cv11', 'ss01', 'ss03';
       -webkit-font-smoothing: antialiased;
+      overflow: hidden;
     }
     code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; }
 
-    /* ---------- header ---------- */
-    header {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 14px 24px;
-      background: linear-gradient(180deg, var(--bg-elev) 0%, var(--panel) 100%);
-      border-bottom: 1px solid var(--border);
-      box-shadow: var(--shadow-1);
+    /* ===================================================================
+       MAP — fills viewport behind everything
+       =================================================================== */
+    .map-wrap {
+      position: fixed; inset: 0;
+      z-index: 0;
     }
-    .brand { display: flex; align-items: center; gap: 12px; }
+    #map { width: 100%; height: 100%; }
+    .leaflet-container { background: #06080c; }
+    .leaflet-control-zoom {
+      border: 0 !important;
+      box-shadow: var(--shadow) !important;
+      border-radius: var(--r-md) !important;
+      overflow: hidden;
+      margin: 16px !important;
+    }
+    .leaflet-control-zoom a {
+      background: var(--surface) !important;
+      backdrop-filter: var(--blur);
+      -webkit-backdrop-filter: var(--blur);
+      color: var(--fg) !important;
+      border: 0 !important;
+      border-bottom: 1px solid var(--hairline) !important;
+      width: 32px !important; height: 32px !important;
+      line-height: 32px !important;
+      font-size: 16px !important;
+    }
+    .leaflet-control-zoom a:last-child { border-bottom: 0 !important; }
+    .leaflet-control-zoom a:hover { background: var(--surface-2) !important; }
+    .leaflet-tooltip {
+      background: var(--surface-2) !important;
+      backdrop-filter: var(--blur);
+      -webkit-backdrop-filter: var(--blur);
+      color: var(--fg) !important;
+      border: 1px solid var(--hairline-2) !important;
+      border-radius: var(--r-xs) !important;
+      box-shadow: var(--shadow) !important;
+      font-size: 11px !important;
+      padding: 5px 9px !important;
+    }
+    .leaflet-tooltip-top:before,
+    .leaflet-tooltip-bottom:before { border-top-color: transparent !important; }
+
+    /* ===================================================================
+       GLASS — shared surface treatment for floating panels
+       =================================================================== */
+    .glass {
+      background: var(--surface);
+      backdrop-filter: var(--blur);
+      -webkit-backdrop-filter: var(--blur);
+      border: 1px solid var(--hairline);
+      border-radius: var(--r-lg);
+      box-shadow: var(--shadow);
+    }
+
+    /* ===================================================================
+       TOP BAR
+       =================================================================== */
+    .topbar {
+      position: fixed; top: 14px; left: 14px; right: 14px;
+      z-index: 1100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 16px;
+      height: 52px;
+      border-radius: var(--r-md);
+      pointer-events: auto;
+    }
+    .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
     .brand-mark {
-      width: 28px; height: 28px; border-radius: 8px;
-      background: linear-gradient(135deg, var(--accent) 0%, #7d5fff 100%);
+      width: 30px; height: 30px; border-radius: 9px;
+      background: linear-gradient(135deg, #0a84ff 0%, #7c5cff 100%);
       display: flex; align-items: center; justify-content: center;
       color: #fff; font-weight: 700; font-size: 14px;
-      box-shadow: 0 4px 12px rgba(91, 155, 255, 0.35);
+      box-shadow: 0 4px 16px rgba(10, 132, 255, 0.35);
+      letter-spacing: -0.02em;
     }
-    .brand-name { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
-    .brand-sub { font-size: 12px; color: var(--muted); margin-left: 6px; }
+    .brand-text { display: flex; flex-direction: column; line-height: 1.15; }
+    .brand-name { font-weight: 600; font-size: 13px; letter-spacing: -0.01em; }
+    .brand-sub { font-size: 11px; color: var(--muted); letter-spacing: 0; }
 
-    .header-right { display: flex; align-items: center; gap: 18px; }
-    .health { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
-    .health .dot {
-      width: 7px; height: 7px; border-radius: 50%; background: var(--muted);
-      box-shadow: 0 0 0 3px rgba(111, 120, 145, 0.15);
+    .topbar-actions { display: flex; align-items: center; gap: 6px; }
+    .icon-btn {
+      width: 34px; height: 34px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: transparent; color: var(--fg-dim);
+      border: 0; border-radius: 10px;
+      cursor: pointer; transition: all 0.15s ease;
+      text-decoration: none;
+      font-size: 15px;
+      position: relative;
+    }
+    .icon-btn:hover { background: var(--hairline-2); color: var(--fg); }
+    .icon-btn.active { background: var(--accent-soft); color: var(--accent); }
+    .icon-btn svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 5px 11px 5px 9px; border-radius: 999px;
+      background: var(--hairline);
+      font-size: 11px; color: var(--fg-dim);
+      font-weight: 500;
+      margin-right: 6px;
+    }
+    .status-pill .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--muted);
+      box-shadow: 0 0 0 3px rgba(137, 144, 163, 0.15);
       transition: all 0.2s;
     }
-    .health .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
-    .health .dot.err { background: var(--err); box-shadow: 0 0 0 3px var(--err-soft); }
-    .nav-links { display: flex; gap: 14px; }
-    .nav-link {
-      color: var(--muted); font-size: 12px; text-decoration: none;
-      padding: 4px 0; border-bottom: 1px solid transparent;
-      transition: all 0.15s ease;
-    }
-    .nav-link:hover { color: var(--fg); border-bottom-color: var(--accent); }
-    .nav-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+    .status-pill .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+    .status-pill .dot.err { background: var(--err); box-shadow: 0 0 0 3px var(--err-soft); }
 
-    /* ---------- history view ---------- */
-    .view-history { display: none; grid-template-columns: 440px 1fr; gap: 18px; padding: 18px;
-      height: calc(100vh - 57px); }
-    body.view-history-active .view-history { display: grid; }
-    body.view-history-active main { display: none; }
+    .topbar-divider { width: 1px; height: 20px; background: var(--hairline-2); margin: 0 4px; }
 
-    .mission-list { overflow: auto; padding: 0; }
-    .mission-list .panel-head { padding: 22px 22px 14px; border-bottom: 1px solid var(--border); }
-    .mission-item {
-      padding: 14px 22px; border-bottom: 1px solid var(--border);
-      cursor: pointer; transition: background 0.1s;
+    /* ===================================================================
+       SIDE PANELS — floating compose card + result card
+       =================================================================== */
+    .side-panel {
+      position: fixed;
+      top: 80px;
+      bottom: 14px;
+      width: 380px;
+      z-index: 1000;
+      display: flex; flex-direction: column;
+      overflow: hidden;
     }
-    .mission-item:hover { background: var(--bg-elev); }
-    .mission-item.active { background: var(--accent-soft); border-left: 3px solid var(--accent); padding-left: 19px; }
-    .mission-item .top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-    .mission-item .cmd { font-size: 13px; color: var(--fg); line-height: 1.4;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
-    .mission-item .meta { font-size: 11px; color: var(--muted); margin-top: 4px;
-      display: flex; gap: 10px; font-family: 'JetBrains Mono', monospace; }
+    .compose-card { left: 14px; }
+    .result-card  { right: 14px; }
+    .result-card.hidden { display: none; }
 
-    .detail-panel { overflow: auto; }
-    .draft-timeline { margin-top: 10px; }
-    .draft-step {
-      background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius-sm);
-      padding: 12px 14px; margin-bottom: 10px;
+    .panel-head {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--hairline);
+      display: flex; align-items: center; justify-content: space-between;
     }
-    .draft-step.failed { border-left: 3px solid var(--err); }
-    .draft-step.final { border-left: 3px solid var(--ok); }
-    .draft-step .draft-head {
-      display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;
-      font-size: 12px;
+    .panel-head h2 {
+      margin: 0;
+      font-size: 16px; font-weight: 600; letter-spacing: -0.015em;
+      color: var(--fg);
     }
-    .draft-step .draft-attempt { font-weight: 600; color: var(--fg); }
-    .draft-step .draft-summary {
-      font-size: 12px; color: var(--fg-dim);
-      display: flex; gap: 16px; flex-wrap: wrap;
+    .panel-head .panel-sub {
+      font-size: 12px; color: var(--muted);
+      margin-top: 2px;
     }
-    .draft-step .draft-summary span { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
-    .draft-violations {
-      margin-top: 8px; padding: 8px 10px; background: var(--err-soft);
-      border-radius: 4px; font-size: 12px; color: var(--err);
+    .panel-body {
+      flex: 1; overflow-y: auto; overflow-x: hidden;
+      padding: 16px 20px 20px;
     }
-    .draft-violations ul { margin: 4px 0 0 18px; padding: 0; }
-    .draft-violations li { margin: 2px 0; }
-    .empty-detail { color: var(--muted); padding: 60px 20px; text-align: center; font-size: 13px; }
-
-    /* ---------- layout ---------- */
-    main {
-      display: grid; grid-template-columns: 400px 1fr; gap: 18px;
-      padding: 18px;
-      height: calc(100vh - 57px);
-    }
-    .panel {
-      background: var(--panel); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: 22px;
-      overflow: auto;
-      box-shadow: var(--shadow-1);
-    }
-    .panel h2 {
-      margin: 0 0 4px;
-      font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
-      color: var(--muted); font-weight: 600;
-    }
-    .panel .h2-sub {
-      margin: 0 0 18px; font-size: 13px; color: var(--fg-dim);
+    .panel-foot {
+      padding: 12px 20px 16px;
+      border-top: 1px solid var(--hairline);
+      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.15) 100%);
     }
 
-    /* ---------- form ---------- */
+    /* ===================================================================
+       FORM CONTROLS
+       =================================================================== */
     .field { margin-bottom: 14px; }
-    .field label {
-      display: block; margin-bottom: 6px;
-      font-size: 12px; color: var(--fg-dim); font-weight: 500;
+    .field label.field-label {
+      display: flex; justify-content: space-between; align-items: baseline;
+      margin-bottom: 6px;
+      font-size: 11px; color: var(--fg-dim); font-weight: 500;
+      text-transform: uppercase; letter-spacing: 0.05em;
     }
-    .field .hint { color: var(--muted); font-weight: 400; }
+    .field-label .hint { color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 11px; }
 
     select, input[type="text"], textarea {
       width: 100%;
-      background: var(--bg-elev); border: 1px solid var(--border);
-      color: var(--fg); padding: 9px 12px; border-radius: var(--radius-sm);
+      background: var(--hairline);
+      border: 1px solid transparent;
+      color: var(--fg); padding: 10px 13px; border-radius: var(--r-sm);
       font: inherit; font-size: 13px;
-      transition: border-color 0.15s, box-shadow 0.15s;
+      transition: all 0.15s;
     }
+    select:hover, input[type="text"]:hover, textarea:hover { background: var(--hairline-2); }
     select:focus, input:focus, textarea:focus {
-      outline: none; border-color: var(--accent);
+      outline: none;
+      background: var(--surface-elev);
+      border-color: var(--accent);
       box-shadow: 0 0 0 3px var(--accent-soft);
     }
-    select { appearance: none; -webkit-appearance: none;
-      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8'><path d='M1 1l5 5 5-5' stroke='%236f7891' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
-      background-repeat: no-repeat; background-position: right 12px center;
-      padding-right: 32px;
+    select {
+      appearance: none; -webkit-appearance: none;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8'><path d='M1 1l5 5 5-5' stroke='%238990a3' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+      background-repeat: no-repeat; background-position: right 13px center;
+      padding-right: 34px;
+      cursor: pointer;
     }
-    textarea { resize: vertical; min-height: 90px; font-family: inherit; line-height: 1.55; }
+    select option { background: #1a1f2c; color: var(--fg); }
+    textarea { resize: vertical; min-height: 78px; font-family: inherit; line-height: 1.55; }
+    textarea::placeholder, input::placeholder { color: var(--muted); }
 
-    /* battery slider */
+    .inline-add {
+      background: var(--accent-soft); color: var(--accent);
+      border: 0; padding: 2px 9px; border-radius: 999px;
+      font: inherit; font-size: 11px; font-weight: 500;
+      cursor: pointer; transition: all 0.15s;
+      letter-spacing: 0;
+    }
+    .inline-add:hover { background: var(--accent); color: #fff; }
+    .field-foot { font-size: 11px; color: var(--muted); margin-top: 4px; min-height: 0; }
+    .area-meta-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 1px 7px; border-radius: 8px;
+      background: var(--hairline); color: var(--muted);
+      font-size: 10px; font-family: 'JetBrains Mono', monospace;
+    }
+    .area-meta-pill.protected { color: var(--ok); }
+
+    /* ===================================================================
+       CHAT THREAD — clarification follow-ups
+       =================================================================== */
+    .chat-thread {
+      display: flex; flex-direction: column; gap: 10px;
+      margin: 4px 0 14px;
+    }
+    .chat-bubble {
+      max-width: 88%;
+      padding: 9px 13px;
+      border-radius: 14px;
+      font-size: 13px; line-height: 1.5;
+      white-space: pre-wrap; word-wrap: break-word;
+      animation: fadeIn 0.2s ease;
+    }
+    .chat-bubble.user {
+      align-self: flex-end;
+      background: var(--accent);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .chat-bubble.assistant {
+      align-self: flex-start;
+      background: var(--hairline);
+      color: var(--fg);
+      border-bottom-left-radius: 4px;
+    }
+    .chat-bubble.assistant.questions { background: var(--warn-soft); color: var(--warn); }
+    .chat-bubble.assistant.questions ul { margin: 4px 0 0; padding-left: 18px; }
+    .chat-bubble.assistant.questions li { margin: 3px 0; }
+    .chat-input-row {
+      display: flex; gap: 6px; align-items: flex-end;
+      margin-top: 8px; padding-top: 12px;
+      border-top: 1px solid var(--hairline);
+    }
+    .chat-input-row textarea {
+      min-height: 36px; max-height: 100px;
+      padding: 8px 12px; font-size: 13px;
+    }
+    .chat-send {
+      width: 36px; height: 36px;
+      flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: var(--accent); color: #fff;
+      border: 0; border-radius: 10px;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .chat-send:hover:not(:disabled) { transform: translateY(-1px); }
+    .chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+    .chat-send svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; }
+
+    /* ===================================================================
+       MODAL — drone create + LLM-research result
+       =================================================================== */
+    .modal-backdrop {
+      position: fixed; inset: 0; z-index: 2000;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(4px);
+      display: none; align-items: center; justify-content: center;
+      animation: fadeIn 0.18s ease;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      width: 440px; max-width: calc(100vw - 32px);
+      max-height: 86vh; overflow: auto;
+      background: var(--surface-elev);
+      backdrop-filter: var(--blur);
+      border: 1px solid var(--hairline);
+      border-radius: var(--r-lg);
+      box-shadow: var(--shadow-lg);
+      padding: 22px 24px;
+    }
+    .modal h3 { margin: 0 0 6px; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; }
+    .modal .modal-sub { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
+    .modal .field-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+      margin-bottom: 10px;
+    }
+    .modal .field { margin-bottom: 10px; }
+    .modal-actions {
+      display: flex; gap: 8px; justify-content: flex-end;
+      margin-top: 16px; padding-top: 14px;
+      border-top: 1px solid var(--hairline);
+    }
+
+    /* battery slider — iOS-style */
     .range-row { display: flex; align-items: center; gap: 12px; }
     input[type="range"] {
       flex: 1;
       -webkit-appearance: none; appearance: none;
-      height: 4px; background: var(--bg-elev); border-radius: 2px;
+      height: 4px; background: var(--hairline-2); border-radius: 2px;
       outline: none; cursor: pointer;
     }
     input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance: none; appearance: none;
-      width: 16px; height: 16px; border-radius: 50%;
-      background: var(--accent); cursor: pointer;
-      box-shadow: 0 2px 8px rgba(91, 155, 255, 0.4);
+      width: 20px; height: 20px; border-radius: 50%;
+      background: #fff; cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 1px 1px rgba(0,0,0,0.3);
       transition: transform 0.1s;
     }
-    input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+    input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.1); }
     .range-val {
-      font-family: 'JetBrains Mono', monospace; font-size: 13px;
+      font-family: 'JetBrains Mono', monospace; font-size: 12px;
       color: var(--fg); min-width: 42px; text-align: right;
-      background: var(--bg-elev); padding: 4px 8px; border-radius: 4px;
-      border: 1px solid var(--border);
+      font-weight: 500;
     }
 
-    /* examples chips */
-    .examples-label {
-      font-size: 11px; color: var(--muted); margin: 14px 0 6px;
-      text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+    /* iOS-style toggle */
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; padding: 4px 0;
+      cursor: pointer; user-select: none;
     }
-    .examples { display: flex; flex-wrap: wrap; gap: 6px; }
-    .examples button {
-      background: var(--bg-elev); color: var(--fg-dim);
-      border: 1px solid var(--border); font-size: 11px;
-      padding: 5px 10px; border-radius: 14px;
-      cursor: pointer; transition: all 0.15s;
-      font-family: inherit;
+    .toggle-row .toggle-text { display: flex; flex-direction: column; min-width: 0; }
+    .toggle-row .toggle-title { font-size: 13px; color: var(--fg); font-weight: 500; }
+    .toggle-row .toggle-sub { font-size: 11px; color: var(--muted); margin-top: 1px; line-height: 1.35; }
+    .toggle { position: relative; display: inline-block; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .toggle-track {
+      display: block;
+      width: 40px; height: 24px;
+      background: var(--hairline-2);
+      border-radius: 999px;
+      position: relative;
+      transition: background 0.2s;
     }
-    .examples button:hover {
-      color: var(--fg); border-color: var(--accent); background: var(--accent-soft);
+    .toggle-track::before {
+      content: '';
+      position: absolute;
+      left: 2px; top: 2px;
+      width: 20px; height: 20px;
+      background: #fff;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      transition: transform 0.2s;
     }
+    .toggle input:checked + .toggle-track { background: var(--ok); }
+    .toggle input:checked + .toggle-track::before { transform: translateX(16px); }
 
-    /* primary button */
+    /* Quick-starts — preset cards */
+    .quick-starts-label {
+      font-size: 11px; color: var(--fg-dim); font-weight: 500;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin: 18px 0 8px;
+    }
+    .quick-starts {
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .quick-start {
+      display: flex; align-items: center; gap: 11px;
+      width: 100%;
+      background: var(--hairline);
+      border: 1px solid transparent;
+      border-radius: var(--r-sm);
+      padding: 10px 12px;
+      font: inherit; color: var(--fg);
+      text-align: left; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .quick-start:hover { background: var(--hairline-2); border-color: var(--hairline-2); transform: translateY(-1px); }
+    .qs-icon {
+      flex-shrink: 0;
+      width: 30px; height: 30px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 8px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 14px; font-weight: 600;
+    }
+    .qs-icon.warn { background: var(--warn-soft); color: var(--warn); }
+    .qs-icon.muted { background: var(--hairline-2); color: var(--muted); }
+    .qs-text { min-width: 0; flex: 1; }
+    .qs-title { font-size: 13px; font-weight: 500; color: var(--fg); line-height: 1.3; }
+    .qs-sub { font-size: 11px; color: var(--muted); margin-top: 1px; line-height: 1.3; }
+
+    /* multi-drone chips */
+    .md-picker {
+      display: none;
+      margin-top: 8px; padding: 10px 12px;
+      background: var(--hairline);
+      border-radius: var(--r-sm);
+    }
+    .md-picker.open { display: block; }
+    .md-picker .md-hint { font-size: 11px; color: var(--muted); margin-bottom: 6px; line-height: 1.35; }
+    .md-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+    .md-chip {
+      background: var(--surface-elev); color: var(--fg-dim);
+      border: 1px solid var(--hairline); padding: 5px 10px;
+      border-radius: 14px; font-size: 11px; cursor: pointer;
+      font-family: inherit; transition: all 0.15s;
+    }
+    .md-chip:hover { color: var(--fg); border-color: var(--accent); }
+    .md-chip.selected { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+
+    /* ===================================================================
+       BUTTONS
+       =================================================================== */
     .btn {
-      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-      padding: 10px 16px; border-radius: var(--radius-sm);
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      padding: 10px 16px; border-radius: var(--r-sm);
       font: inherit; font-size: 13px; font-weight: 500;
       cursor: pointer; border: 0;
       transition: all 0.15s; user-select: none;
+      letter-spacing: -0.005em;
     }
     .btn-primary {
-      background: linear-gradient(180deg, var(--accent) 0%, var(--accent-2) 100%);
+      background: linear-gradient(180deg, var(--accent-2) 0%, var(--accent) 100%);
       color: #fff;
-      box-shadow: 0 1px 0 rgba(255,255,255,0.1) inset, 0 4px 12px rgba(91, 155, 255, 0.25);
+      box-shadow: 0 1px 0 rgba(255,255,255,0.15) inset, 0 6px 16px rgba(10, 132, 255, 0.35);
     }
-    .btn-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 1px 0 rgba(255,255,255,0.15) inset, 0 6px 16px rgba(91, 155, 255, 0.35); }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-ok { background: var(--ok); color: #0a0e17; }
-    .btn-ok:hover { filter: brightness(1.1); }
-    .btn-danger { background: var(--err); color: #fff; }
-    .btn-danger:hover { filter: brightness(1.1); }
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 1px 0 rgba(255,255,255,0.2) inset, 0 10px 24px rgba(10, 132, 255, 0.45);
+    }
+    .btn-primary:active:not(:disabled) { transform: translateY(0); }
+    .btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
+    .btn-ok      { background: var(--ok);   color: #07090e; font-weight: 600; }
+    .btn-ok:hover{ filter: brightness(1.08); }
+    .btn-danger  { background: var(--err);  color: #fff; }
+    .btn-danger:hover { filter: brightness(1.08); }
     .btn-ghost {
-      background: var(--bg-elev); color: var(--fg); border: 1px solid var(--border);
+      background: var(--hairline); color: var(--fg);
     }
-    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
-    .btn-block { width: 100%; padding: 12px 16px; }
+    .btn-ghost:hover { background: var(--hairline-2); }
+    .btn-block { width: 100%; padding: 13px 16px; font-size: 14px; font-weight: 600; }
 
-    /* ---------- right column ---------- */
-    .right { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-    .map-wrap {
-      position: relative; flex: 1; min-height: 320px;
-      border-radius: var(--radius);
-      border: 1px solid var(--border);
-      overflow: hidden;
-      box-shadow: var(--shadow-1);
-    }
-    #map { width: 100%; height: 100%; }
-    .leaflet-container { background: #0d1220; }
-
-    .legend {
-      position: absolute; bottom: 12px; left: 12px;
-      background: rgba(17, 23, 38, 0.92); backdrop-filter: blur(8px);
-      border: 1px solid var(--border); border-radius: var(--radius-sm);
-      padding: 10px 12px; font-size: 11px; z-index: 1000;
-      box-shadow: var(--shadow-2);
-    }
-    .legend-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
-    .legend-swatch { width: 14px; height: 3px; border-radius: 2px; }
-    .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
-
-    /* result panel */
-    .result {
-      background: var(--panel); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: 22px;
-      max-height: 45vh; overflow: auto;
-      box-shadow: var(--shadow-1);
-      animation: fadeIn 0.3s ease;
-    }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-
+    /* ===================================================================
+       RESULT PANEL — populated after compile
+       =================================================================== */
     .empty-state {
-      text-align: center; padding: 36px 20px;
+      text-align: center; padding: 40px 20px;
       color: var(--muted); font-size: 13px;
     }
-    .empty-state .empty-icon {
-      font-size: 28px; margin-bottom: 10px; opacity: 0.4;
-    }
+    .empty-state .empty-icon { font-size: 28px; margin-bottom: 10px; opacity: 0.45; display: block; }
 
     .status-bar {
-      display: flex; align-items: center; gap: 12px;
+      display: flex; align-items: center; gap: 10px;
       padding-bottom: 14px; margin-bottom: 14px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid var(--hairline);
+      flex-wrap: wrap;
     }
     .badge {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 5px 11px; border-radius: 14px;
       font-size: 11px; font-weight: 600;
-      text-transform: uppercase; letter-spacing: 0.04em;
+      letter-spacing: -0.005em;
     }
-    .badge-icon { font-size: 13px; line-height: 1; }
-    .badge.ready { background: var(--ok-soft); color: var(--ok); }
-    .badge.rejected { background: var(--err-soft); color: var(--err); }
-    .badge.clarification { background: var(--warn-soft); color: var(--warn); }
-    .badge.error { background: rgba(111, 120, 145, 0.15); color: var(--muted); }
+    .badge-icon { font-size: 12px; line-height: 1; }
+    .badge.ready          { background: var(--ok-soft);   color: var(--ok); }
+    .badge.rejected       { background: var(--err-soft);  color: var(--err); }
+    .badge.clarification  { background: var(--warn-soft); color: var(--warn); }
+    .badge.error          { background: var(--hairline-2);color: var(--muted); }
     .status-meta {
       color: var(--muted); font-size: 12px;
-      display: flex; align-items: center; gap: 10px;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     }
     .status-meta .pill {
-      background: var(--bg-elev); padding: 3px 8px; border-radius: 4px;
-      border: 1px solid var(--border); font-family: 'JetBrains Mono', monospace;
+      background: var(--hairline); padding: 3px 8px; border-radius: 5px;
+      font-family: 'JetBrains Mono', monospace;
       font-size: 11px; color: var(--fg-dim);
     }
 
     .stats {
-      display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
-      margin-bottom: 16px;
+      display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+      margin-bottom: 14px;
     }
     .stat {
-      background: var(--bg-elev); padding: 10px 12px; border-radius: var(--radius-sm);
-      border: 1px solid var(--border);
+      background: var(--hairline); padding: 11px 13px; border-radius: var(--r-sm);
     }
     .stat .lbl {
       font-size: 10px; color: var(--muted);
-      text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
     }
     .stat .val {
-      font-size: 17px; font-weight: 600; margin-top: 3px;
-      color: var(--fg); letter-spacing: -0.01em;
+      font-size: 19px; font-weight: 600; margin-top: 3px;
+      color: var(--fg); letter-spacing: -0.02em;
       font-feature-settings: 'tnum';
     }
     .stat .sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
@@ -337,29 +551,45 @@
     .section { margin: 14px 0; }
     .section-title {
       font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
-      color: var(--muted); font-weight: 600; margin-bottom: 8px;
+      color: var(--fg-dim); font-weight: 600; margin-bottom: 8px;
     }
     .reasoning {
-      background: var(--bg-elev); border-left: 3px solid var(--accent);
-      padding: 12px 14px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-      font-size: 13px; line-height: 1.6; color: var(--fg-dim);
+      background: var(--hairline); border-left: 3px solid var(--accent);
+      padding: 11px 13px; border-radius: 0 var(--r-xs) var(--r-xs) 0;
+      font-size: 12.5px; line-height: 1.55; color: var(--fg-dim);
     }
     .reasons-list { margin: 6px 0 0; padding-left: 18px; }
-    .reasons-list li { margin: 4px 0; font-size: 13px; line-height: 1.5; }
+    .reasons-list li { margin: 4px 0; font-size: 12.5px; line-height: 1.45; }
     .reasons-list.rejected li { color: var(--err); }
     .reasons-list.clarification li { color: var(--warn); }
 
     .actions {
-      display: flex; gap: 8px; margin-top: 18px;
-      padding-top: 14px; border-top: 1px solid var(--border);
+      display: flex; gap: 6px; margin-top: 16px;
+      padding-top: 14px; border-top: 1px solid var(--hairline);
+      flex-wrap: wrap;
     }
+    .actions .btn { padding: 9px 14px; font-size: 12.5px; }
+
     .toast {
-      margin-top: 14px; padding: 10px 14px;
-      border-radius: var(--radius-sm); font-size: 13px;
+      margin-top: 12px; padding: 10px 13px;
+      border-radius: var(--r-sm); font-size: 12.5px;
       animation: fadeIn 0.25s ease;
+      line-height: 1.5;
     }
-    .toast.ok { background: var(--ok-soft); color: var(--ok); border: 1px solid rgba(74, 222, 128, 0.3); }
-    .toast.err { background: var(--err-soft); color: var(--err); border: 1px solid rgba(239, 103, 100, 0.3); }
+    .toast.ok  { background: var(--ok-soft);  color: var(--ok);  border: 1px solid rgba(48, 209, 88, 0.28); }
+    .toast.err { background: var(--err-soft); color: var(--err); border: 1px solid rgba(255, 69, 58, 0.28); }
+
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes slideIn { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: translateX(0); } }
+    .result-card:not(.hidden) { animation: slideIn 0.28s cubic-bezier(0.32, 0.72, 0, 1); }
+
+    .mini-badge {
+      display: inline-block; padding: 2px 7px; border-radius: 10px;
+      font-size: 10px; font-weight: 600;
+    }
+    .mini-badge.ready         { background: var(--ok-soft);   color: var(--ok); }
+    .mini-badge.rejected      { background: var(--err-soft);  color: var(--err); }
+    .mini-badge.clarification { background: var(--warn-soft); color: var(--warn); }
 
     /* spinner */
     .spinner {
@@ -369,167 +599,226 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* leaflet overrides */
-    .leaflet-tooltip {
-      background: rgba(17, 23, 38, 0.95) !important; color: var(--fg) !important;
-      border: 1px solid var(--border-strong) !important; border-radius: 4px !important;
-      box-shadow: var(--shadow-2) !important; font-size: 11px !important;
-      padding: 4px 8px !important; backdrop-filter: blur(4px);
+    /* ===================================================================
+       LEGEND — small floating chip, expandable
+       =================================================================== */
+    .legend {
+      position: fixed; bottom: 16px;
+      left: 50%; transform: translateX(-50%);
+      z-index: 1000;
+      padding: 10px 14px;
+      font-size: 11px;
+      display: flex; gap: 16px; align-items: center;
+      flex-wrap: wrap;
+      max-width: calc(100vw - 28px);
     }
-    .leaflet-tooltip-top:before,
-    .leaflet-tooltip-bottom:before { border-top-color: rgba(17, 23, 38, 0.95) !important; }
-    .leaflet-control-zoom a {
-      background: var(--panel) !important; color: var(--fg) !important;
-      border: 1px solid var(--border) !important;
-    }
-    .leaflet-control-zoom a:hover { background: var(--panel-2) !important; }
+    .legend-row { display: flex; align-items: center; gap: 6px; color: var(--fg-dim); white-space: nowrap; }
+    .legend-swatch { width: 12px; height: 3px; border-radius: 2px; }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .legend-sep { width: 1px; height: 14px; background: var(--hairline-2); }
 
-    /* ---------- area editor ---------- */
+    /* ===================================================================
+       AREA EDITOR — overlay on the map (top right)
+       =================================================================== */
     .editor-toolbar {
-      position: absolute; top: 12px; left: 12px; z-index: 1000;
-      display: flex; gap: 6px; flex-direction: column;
+      position: fixed; top: 80px; right: 14px;
+      z-index: 1050;
     }
-    .editor-toolbar .btn {
-      padding: 6px 12px; font-size: 12px;
-    }
+    .editor-toolbar .btn { padding: 8px 14px; font-size: 12.5px; }
+    /* hide when result panel is open */
+    .result-card:not(.hidden) ~ .editor-toolbar { display: none; }
+
     .editor-panel {
-      position: absolute; top: 12px; right: 12px; z-index: 1000;
-      background: rgba(17, 23, 38, 0.96); backdrop-filter: blur(10px);
-      border: 1px solid var(--border); border-radius: var(--radius);
-      padding: 14px; width: 240px; box-shadow: var(--shadow-2);
+      position: fixed; top: 80px; right: 14px;
+      width: 280px; z-index: 1100;
+      padding: 16px;
       display: none;
     }
     .editor-panel.open { display: block; }
     .editor-panel h3 {
-      margin: 0 0 8px; font-size: 12px; text-transform: uppercase;
-      letter-spacing: 0.05em; color: var(--muted); font-weight: 600;
+      margin: 0 0 6px; font-size: 13px; font-weight: 600;
+      letter-spacing: -0.01em;
     }
     .editor-panel .field { margin-bottom: 10px; }
-    .editor-panel .field label { font-size: 11px; }
     .editor-hint {
-      font-size: 11px; color: var(--muted); line-height: 1.4; margin-bottom: 8px;
+      font-size: 11px; color: var(--muted); line-height: 1.4; margin-bottom: 10px;
     }
     .editor-status {
-      font-size: 11px; padding: 6px 8px; border-radius: 4px;
-      background: var(--bg-elev); margin: 6px 0 10px;
+      font-size: 11px; padding: 7px 9px; border-radius: var(--r-xs);
+      background: var(--hairline); margin: 8px 0 12px;
       font-family: 'JetBrains Mono', monospace;
+      color: var(--fg-dim);
     }
-    /* leaflet.draw dark-mode polish */
+    /* leaflet.draw dark polish */
+    .leaflet-draw-toolbar {
+      margin-top: 76px !important;
+      margin-left: 16px !important;
+    }
     .leaflet-draw-toolbar a {
-      background-color: var(--panel) !important; border: 1px solid var(--border) !important;
+      background-color: var(--surface-2) !important;
+      backdrop-filter: var(--blur);
+      border: 1px solid var(--hairline) !important;
       filter: invert(0.85);
     }
 
-    /* ---------- history drawer ---------- */
+    /* ===================================================================
+       HISTORY DRAWER — slide-in from right
+       =================================================================== */
     .drawer {
-      position: fixed; top: 0; right: 0; bottom: 0; width: 380px;
-      background: var(--panel); border-left: 1px solid var(--border);
-      box-shadow: -8px 0 32px rgba(0,0,0,0.45);
-      transform: translateX(100%); transition: transform 0.25s ease;
-      z-index: 2000; display: flex; flex-direction: column;
+      position: fixed; top: 0; right: 0; bottom: 0; width: 400px;
+      background: rgba(15, 18, 25, 0.92);
+      backdrop-filter: var(--blur);
+      -webkit-backdrop-filter: var(--blur);
+      border-left: 1px solid var(--hairline);
+      box-shadow: var(--shadow-lg);
+      transform: translateX(100%);
+      transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+      z-index: 1200;
+      display: flex; flex-direction: column;
     }
     .drawer.open { transform: translateX(0); }
     .drawer-head {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 18px 22px; border-bottom: 1px solid var(--border);
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--hairline);
     }
-    .drawer-head h3 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+    .drawer-head h3 {
+      margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.015em;
+    }
     .drawer-close {
       background: transparent; border: 0; color: var(--muted);
-      font-size: 18px; cursor: pointer; padding: 4px 8px; border-radius: 4px;
+      width: 30px; height: 30px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 20px; cursor: pointer; border-radius: 8px;
+      transition: all 0.15s;
     }
-    .drawer-close:hover { color: var(--fg); background: var(--bg-elev); }
-    .drawer-body { flex: 1; overflow: auto; padding: 10px 14px; }
+    .drawer-close:hover { color: var(--fg); background: var(--hairline-2); }
+    .drawer-body { flex: 1; overflow: auto; padding: 12px; }
+
     .mission-row {
-      padding: 12px 14px; border: 1px solid var(--border);
-      border-radius: var(--radius-sm); margin-bottom: 8px;
+      padding: 12px 14px; border: 1px solid var(--hairline);
+      border-radius: var(--r-sm); margin-bottom: 6px;
       cursor: pointer; transition: all 0.15s;
-      background: var(--bg-elev);
+      background: transparent;
     }
-    .mission-row:hover { border-color: var(--accent); background: var(--panel-2); }
+    .mission-row:hover { background: var(--hairline); border-color: var(--hairline-2); }
     .mission-row .mr-top {
       display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 6px;
+      gap: 8px;
+      margin-bottom: 4px;
     }
     .mission-row .mr-id {
       font-family: 'JetBrains Mono', monospace; font-size: 11px;
       color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      max-width: 180px;
+      max-width: 200px;
     }
-    .mission-row .mr-meta { display: flex; gap: 6px; font-size: 11px; color: var(--muted); }
-    .mission-row .mr-area { font-size: 12px; color: var(--fg-dim); margin-top: 2px; }
-    .mini-badge {
-      display: inline-block; padding: 2px 7px; border-radius: 10px;
-      font-size: 10px; font-weight: 600; text-transform: uppercase;
-    }
-    .mini-badge.ready { background: var(--ok-soft); color: var(--ok); }
-    .mini-badge.rejected { background: var(--err-soft); color: var(--err); }
-    .mini-badge.clarification { background: var(--warn-soft); color: var(--warn); }
+    .mission-row .mr-meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .mission-row .mr-area { font-size: 12px; color: var(--fg-dim); }
     .approval-tag {
       font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px;
-      background: var(--bg-elev); border: 1px solid var(--border); color: var(--muted);
+      background: var(--hairline-2); color: var(--muted);
     }
-    .approval-tag.approved { color: var(--ok); border-color: rgba(74,222,128,0.4); }
-    .approval-tag.op-rejected { color: var(--err); border-color: rgba(239,103,100,0.4); }
+    .approval-tag.approved { color: var(--ok); }
+    .approval-tag.op-rejected { color: var(--err); }
 
     /* scrollbar polish */
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+    ::-webkit-scrollbar-thumb { background: var(--hairline-2); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+    /* responsive — narrow screens collapse to bottom-sheet style */
+    @media (max-width: 880px) {
+      .side-panel { width: calc(100vw - 28px); }
+      .compose-card { left: 14px; right: 14px; bottom: 14px; top: auto; max-height: 60vh; }
+      .result-card { left: 14px; right: 14px; top: 80px; bottom: 14px; width: auto; }
+      .legend { display: none; }
+    }
   </style>
 </head>
 <body>
 
-<header>
+<!-- ===== Map (background) ===== -->
+<div class="map-wrap">
+  <div id="map"></div>
+</div>
+
+<!-- ===== Top bar (floating glass) ===== -->
+<header class="topbar glass">
   <div class="brand">
     <div class="brand-mark">M</div>
-    <span class="brand-name">Mission Tasking Service</span>
-    <span class="brand-sub">v0.1</span>
-  </div>
-  <div class="header-right">
-    <nav class="nav-links">
-      <a class="nav-link nav-tab active" data-view="compose" href="#compose">Compose</a>
-      <a class="nav-link nav-tab" data-view="history" href="#history">History</a>
-      <a class="nav-link" href="/docs" target="_blank">API</a>
-      <a class="nav-link" href="http://localhost:3000" target="_blank">Grafana</a>
-      <a class="nav-link" href="https://smith.langchain.com" target="_blank">LangSmith</a>
-    </nav>
-    <div class="health">
-      <span id="health-text">checking…</span>
-      <span id="health-dot" class="dot"></span>
+    <div class="brand-text">
+      <span class="brand-name">Mission Tasking</span>
+      <span class="brand-sub">Operator console</span>
     </div>
+  </div>
+  <div class="topbar-actions">
+    <span class="status-pill" title="Service health">
+      <span class="dot" id="health-dot"></span>
+      <span id="health-text">checking</span>
+    </span>
+    <button class="icon-btn" id="open-history" title="Mission history" aria-label="Mission history">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+    </button>
+    <a class="icon-btn" href="/docs" target="_blank" title="API docs" aria-label="API docs">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
+    </a>
+    <a class="icon-btn" href="http://localhost:3000" target="_blank" title="Grafana dashboard" aria-label="Grafana">
+      <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
+    </a>
+    <a class="icon-btn" href="https://smith.langchain.com" target="_blank" title="LangSmith traces" aria-label="LangSmith">
+      <svg viewBox="0 0 24 24"><path d="M21 21l-4.35-4.35"/><circle cx="11" cy="11" r="7"/></svg>
+    </a>
   </div>
 </header>
 
-<main>
-  <!-- LEFT: form -->
-  <section class="panel">
-    <h2>Compose mission</h2>
-    <p class="h2-sub">Natural-language command → validated flight plan.</p>
+<!-- ===== Compose panel (left, floating glass) ===== -->
+<aside class="side-panel compose-card glass">
+  <div class="panel-head">
+    <div>
+      <h2>Compose mission</h2>
+      <div class="panel-sub">Describe what the drone should do — in plain language.</div>
+    </div>
+  </div>
 
+  <div class="panel-body">
     <div class="field">
-      <label for="area">Operating area</label>
+      <label class="field-label" for="area">
+        Operating area
+        <button type="button" class="inline-add" id="add-area-btn" title="Draw a new operating area on the map">+ Add</button>
+      </label>
       <select id="area"></select>
+      <div class="field-foot" id="area-foot"></div>
     </div>
 
     <div class="field">
-      <label for="drone">
-        Drone profile <span class="hint">— or check below for a group</span>
+      <label class="field-label" for="drone">
+        Drone profile
+        <button type="button" class="inline-add" id="add-drone-btn" title="Create a new drone profile">+ Add</button>
       </label>
       <select id="drone"></select>
-      <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-top: 8px;">
-        <input type="checkbox" id="multi-drone" style="width: auto; cursor: pointer;" />
-        <span style="font-size: 12px; color: var(--fg-dim);">Coordinate as a multi-drone group</span>
+
+      <label class="toggle-row" style="margin-top: 10px;">
+        <span class="toggle-text">
+          <span class="toggle-title">Multi-drone group</span>
+          <span class="toggle-sub">Coordinate two or more drones at staggered altitudes</span>
+        </span>
+        <span class="toggle">
+          <input type="checkbox" id="multi-drone" />
+          <span class="toggle-track"></span>
+        </span>
       </label>
-      <div id="multi-drone-picker" style="display: none; margin-top: 8px;">
-        <div class="hint" style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Pick 2+ drones — server assigns altitude layers (40, 70, 100m)</div>
-        <div id="multi-drone-chips" style="display: flex; flex-wrap: wrap; gap: 5px;"></div>
+      <div class="md-picker" id="multi-drone-picker">
+        <div class="md-hint">Pick 2 or more drones. Server assigns altitude layers automatically (40 m, 70 m, 100 m).</div>
+        <div class="md-chips" id="multi-drone-chips"></div>
       </div>
     </div>
 
     <div class="field">
-      <label for="battery">Starting battery</label>
+      <label class="field-label" for="battery">
+        Starting battery
+        <span class="hint" id="batteryHint">at takeoff</span>
+      </label>
       <div class="range-row">
         <input type="range" id="battery" min="20" max="100" value="100" />
         <span class="range-val" id="batteryVal">100%</span>
@@ -537,88 +826,181 @@
     </div>
 
     <div class="field">
-      <label for="command">Mission command <span class="hint">— natural language</span></label>
+      <label class="field-label" for="command">
+        Mission command
+        <span class="hint">natural language</span>
+      </label>
       <textarea id="command" placeholder="e.g. Patrol the yard perimeter at 60 meters with EO and return to base."></textarea>
     </div>
 
-    <div class="examples-label">Try one</div>
-    <div class="examples">
-      <button data-cmd="Patrol the yard perimeter at 60 meters with EO and return to base.">perimeter patrol</button>
-      <button data-cmd="Hover above the center of the yard at 50 meters for two minutes and watch with EO.">loiter + watch</button>
-      <button data-cmd="Search the yard at 80 meters using a lawnmower pattern with EO sensor.">lawnmower</button>
-      <button data-cmd="Fly directly over the grain silo.">NFZ violation</button>
-      <button data-cmd="Go check something out there.">vague</button>
+    <div class="quick-starts-label">Quick starts</div>
+    <div class="quick-starts">
+      <button class="quick-start" data-cmd="Patrol the yard perimeter at 60 meters with EO and return to base.">
+        <div class="qs-icon">◯</div>
+        <div class="qs-text">
+          <div class="qs-title">Perimeter patrol</div>
+          <div class="qs-sub">Fly the boundary at 60 m with the EO camera</div>
+        </div>
+      </button>
+      <button class="quick-start" data-cmd="Hover above the center of the yard at 50 meters for two minutes and watch with EO.">
+        <div class="qs-icon">⊙</div>
+        <div class="qs-text">
+          <div class="qs-title">Observe a point</div>
+          <div class="qs-sub">Hover above center at 50 m for 2 minutes</div>
+        </div>
+      </button>
+      <button class="quick-start" data-cmd="Search the yard at 80 meters using a lawnmower pattern with EO sensor.">
+        <div class="qs-icon">▦</div>
+        <div class="qs-text">
+          <div class="qs-title">Area sweep</div>
+          <div class="qs-sub">Lawnmower search pattern at 80 m</div>
+        </div>
+      </button>
+      <button class="quick-start" data-cmd="Fly directly over the grain silo.">
+        <div class="qs-icon warn">⚠</div>
+        <div class="qs-text">
+          <div class="qs-title">Test: no-fly breach</div>
+          <div class="qs-sub">Should be rejected — flies into an NFZ on purpose</div>
+        </div>
+      </button>
+      <button class="quick-start" data-cmd="Go check something out there.">
+        <div class="qs-icon muted">?</div>
+        <div class="qs-text">
+          <div class="qs-title">Test: ambiguous command</div>
+          <div class="qs-sub">Should ask the operator for clarification</div>
+        </div>
+      </button>
     </div>
 
-    <div class="field" style="margin-top: 14px;">
-      <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-        <input type="checkbox" id="alternatives" style="width: auto; cursor: pointer;" />
-        <span>Generate alternative plans</span>
-      </label>
-      <div class="hint" style="font-size: 11px; color: var(--muted); margin-top: 4px;">
-        Costs one extra LLM call. Operator picks one before approval.
-      </div>
-    </div>
+    <label class="toggle-row" style="margin-top: 18px;">
+      <span class="toggle-text">
+        <span class="toggle-title">Generate alternatives</span>
+        <span class="toggle-sub">Produce up to 2 extra valid plans. Costs one extra LLM call.</span>
+      </span>
+      <span class="toggle">
+        <input type="checkbox" id="alternatives" />
+        <span class="toggle-track"></span>
+      </span>
+    </label>
+  </div>
 
-    <div style="margin-top: 16px;">
-      <button id="compile" class="btn btn-primary btn-block">Compile mission</button>
-    </div>
-  </section>
+  <div class="panel-foot">
+    <button id="compile" class="btn btn-primary btn-block">Compile mission</button>
+  </div>
+</aside>
 
-  <!-- RIGHT: map + result -->
-  <section class="right">
-    <div class="map-wrap">
-      <div id="map"></div>
-      <div class="editor-toolbar">
-        <button id="edit-area-btn" class="btn btn-ghost" title="Draw a new operating area">✎ New area</button>
-      </div>
-      <div class="editor-panel" id="editor-panel">
-        <h3>Area editor</h3>
-        <div class="editor-hint">1. Draw a polygon (boundary).<br>2. Optionally add no-fly polygons.<br>3. Click a point as home base.</div>
-        <div class="field">
-          <label for="new-area-id">Area ID</label>
-          <input type="text" id="new-area-id" placeholder="e.g. north-field" />
-        </div>
-        <div class="field">
-          <label for="new-ceiling">Ceiling (m)</label>
-          <input type="text" id="new-ceiling" value="120" />
-        </div>
-        <div class="editor-status" id="editor-status">no boundary yet</div>
-        <div style="display: flex; gap: 6px;">
-          <button id="save-area-btn" class="btn btn-primary" style="flex:1; padding:7px;">Save</button>
-          <button id="cancel-area-btn" class="btn btn-ghost" style="padding:7px;">Cancel</button>
-        </div>
-      </div>
-      <div class="legend">
-        <div class="legend-row"><div class="legend-swatch" style="background:#5b9bff;"></div>Boundary</div>
-        <div class="legend-row"><div class="legend-swatch" style="background:#ef6764;"></div>No-fly zone</div>
-        <div class="legend-row"><div class="legend-dot" style="background:#4ade80;"></div>Home base</div>
-        <div class="legend-row"><div class="legend-swatch" style="background:#5b9bff;"></div>Transit / RTB</div>
-        <div class="legend-row"><div class="legend-swatch" style="background:#a78bfa;"></div>Search pattern</div>
-        <div class="legend-row"><div class="legend-swatch" style="background:#f5c463;"></div>Loiter / sensor</div>
-        <div class="legend-row" style="margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border);">
-          <div class="legend-dot" style="background:#ef6764;"></div>Hard violation
-        </div>
-        <div class="legend-row"><div class="legend-dot" style="background:#f5a35b;"></div>Envelope (alt/coverage)</div>
-        <div class="legend-row"><div class="legend-dot" style="background:#f5c463;"></div>Resource (battery)</div>
-      </div>
+<!-- ===== Result panel (right, floating glass, hidden until compile) ===== -->
+<aside class="side-panel result-card glass hidden" id="result-card">
+  <div class="panel-head">
+    <div>
+      <h2>Mission plan</h2>
+      <div class="panel-sub" id="result-sub">Generated by the planner</div>
     </div>
-    <div id="result" class="result">
-      <div class="empty-state">
-        <div class="empty-icon">📋</div>
-        <div>No mission yet. Fill out the form on the left and click <b style="color: var(--fg-dim);">Compile mission</b>.</div>
-      </div>
-    </div>
-  </section>
-</main>
+    <button class="drawer-close" id="close-result" aria-label="Close">×</button>
+  </div>
+  <div class="panel-body" id="result"></div>
+</aside>
 
+<!-- ===== Area editor overlay (button + panel anchored to top-right of map) ===== -->
+<div class="editor-toolbar">
+  <button id="edit-area-btn" class="btn btn-ghost glass" title="Draw a new operating area">✎ New area</button>
+</div>
+<div class="editor-panel glass" id="editor-panel">
+  <h3>Area editor</h3>
+  <div class="editor-hint">1. Draw a polygon (boundary).<br>2. Optionally draw no-fly polygons.<br>3. Drop a marker as home base.</div>
+  <div class="field">
+    <label class="field-label" for="new-area-id">Area ID</label>
+    <input type="text" id="new-area-id" placeholder="e.g. north-field" />
+  </div>
+  <div class="field">
+    <label class="field-label" for="new-ceiling">Ceiling (m)</label>
+    <input type="text" id="new-ceiling" value="120" />
+  </div>
+  <div class="editor-status" id="editor-status">no boundary yet</div>
+  <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+    <button id="research-area-btn" class="btn btn-ghost" style="flex:1; font-size: 12px;" title="Ask the LLM for likely NFZs + ceiling">✨ Research area</button>
+  </div>
+  <div id="research-result" style="display:none; font-size:11px; color:var(--fg-dim); background:var(--hairline); padding:8px 10px; border-radius:8px; margin-bottom:8px; line-height:1.45;"></div>
+  <div style="display: flex; gap: 6px;">
+    <button id="save-area-btn" class="btn btn-primary" style="flex:1;">Save</button>
+    <button id="cancel-area-btn" class="btn btn-ghost">Cancel</button>
+  </div>
+</div>
+
+<!-- ===== Drone-create modal ===== -->
+<div class="modal-backdrop" id="drone-modal">
+  <div class="modal">
+    <h3>New drone profile</h3>
+    <div class="modal-sub">Capabilities the planner and safety kernel will assume when this drone is selected.</div>
+    <div class="field">
+      <label class="field-label" for="dp-id">Profile ID</label>
+      <input type="text" id="dp-id" placeholder="e.g. mid-endurance-quad" />
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label class="field-label" for="dp-endur">Endurance (min)</label>
+        <input type="text" id="dp-endur" value="30" />
+      </div>
+      <div class="field">
+        <label class="field-label" for="dp-speed">Cruise (m/s)</label>
+        <input type="text" id="dp-speed" value="15" />
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label class="field-label" for="dp-climb">Climb (m/s)</label>
+        <input type="text" id="dp-climb" value="4" />
+      </div>
+      <div class="field">
+        <label class="field-label" for="dp-batt">Battery (Wh)</label>
+        <input type="text" id="dp-batt" value="300" />
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label class="field-label" for="dp-cruisew">Cruise power (W)</label>
+        <input type="text" id="dp-cruisew" value="300" />
+      </div>
+      <div class="field">
+        <label class="field-label" for="dp-hoverw">Hover power (W)</label>
+        <input type="text" id="dp-hoverw" value="450" />
+      </div>
+    </div>
+    <div class="field">
+      <label class="field-label" for="dp-desc">Description <span class="hint">optional</span></label>
+      <input type="text" id="dp-desc" placeholder="One-line description" />
+    </div>
+    <div id="dp-status" style="font-size: 11px; color: var(--muted); min-height: 14px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="dp-cancel">Cancel</button>
+      <button class="btn btn-primary" id="dp-save">Save drone</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Legend (bottom floating chip) ===== -->
+<div class="legend glass">
+  <span class="legend-row"><span class="legend-swatch" style="background:#5b9bff;"></span>Boundary</span>
+  <span class="legend-row"><span class="legend-swatch" style="background:#ef6764;"></span>No-fly</span>
+  <span class="legend-row"><span class="legend-dot" style="background:#4ade80;"></span>Home</span>
+  <span class="legend-sep"></span>
+  <span class="legend-row"><span class="legend-swatch" style="background:#5b9bff;"></span>Transit</span>
+  <span class="legend-row"><span class="legend-swatch" style="background:#a78bfa;"></span>Search</span>
+  <span class="legend-row"><span class="legend-swatch" style="background:#f5c463;"></span>Loiter / sensor</span>
+  <span class="legend-sep"></span>
+  <span class="legend-row"><span class="legend-dot" style="background:#ef6764;"></span>Hard violation</span>
+  <span class="legend-row"><span class="legend-dot" style="background:#f5a35b;"></span>Envelope</span>
+  <span class="legend-row"><span class="legend-dot" style="background:#f5c463;"></span>Resource</span>
+</div>
+
+<!-- ===== History drawer (slide-in from right) ===== -->
 <aside id="drawer" class="drawer" aria-hidden="true">
   <div class="drawer-head">
     <h3>Mission history</h3>
     <button class="drawer-close" id="close-history" aria-label="Close">×</button>
   </div>
   <div class="drawer-body" id="history-body">
-    <div class="empty-state"><div class="empty-icon">📜</div><div>Loading…</div></div>
+    <div class="empty-state"><span class="empty-icon">⏳</span>Loading…</div>
   </div>
 </aside>
 
@@ -634,6 +1016,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const battery = $('battery'), batteryVal = $('batteryVal');
   const command = $('command'), compileBtn = $('compile');
   const resultEl = $('result');
+  const resultCard = $('result-card');
   const healthText = $('health-text'), healthDot = $('health-dot');
 
   // ----- map: dark basemap from CartoDB
@@ -646,19 +1029,24 @@ window.addEventListener('DOMContentLoaded', () => {
   // ----- battery slider
   battery.addEventListener('input', () => batteryVal.textContent = battery.value + '%');
 
-  // ----- examples
-  document.querySelectorAll('.examples button').forEach(b =>
+  // ----- quick-start presets — copy data-cmd into the textarea and focus
+  document.querySelectorAll('.quick-start').forEach(b =>
     b.addEventListener('click', () => { command.value = b.dataset.cmd; command.focus(); }));
+
+  // ----- result-card close
+  $('close-result').addEventListener('click', () => {
+    resultCard.classList.add('hidden');
+  });
 
   // ----- health poll
   async function ping() {
     try {
       const r = await fetch('/healthz');
       if (!r.ok) throw 0;
-      healthText.textContent = 'service ready';
+      healthText.textContent = 'ready';
       healthDot.className = 'dot ok';
     } catch {
-      healthText.textContent = 'service down';
+      healthText.textContent = 'offline';
       healthDot.className = 'dot err';
     }
   }
@@ -667,18 +1055,30 @@ window.addEventListener('DOMContentLoaded', () => {
   // ----- load areas + drones
   async function loadAreas() {
     currentAreas = await (await fetch('/v1/areas')).json();
-    areaSel.innerHTML = currentAreas.map(a =>
-      `<option value="${a.area_id}">${a.area_id} — ceiling ${a.ceiling_m}m</option>`).join('');
+    areaSel.innerHTML = currentAreas.map(a => {
+      const mark = a.protected ? '★ ' : '';
+      return `<option value="${a.area_id}">${mark}${a.area_id} · ceiling ${a.ceiling_m}m</option>`;
+    }).join('');
+    // LFU surface (DD-008): show user-area count vs cap so the eviction rule
+    // is discoverable. Protected (seeded) areas are immune and counted separately.
+    const userCount = currentAreas.filter(a => !a.protected).length;
+    const protCount = currentAreas.length - userCount;
+    $('area-foot').innerHTML = `
+      <span class="area-meta-pill">${userCount}/10 user</span>
+      <span class="area-meta-pill protected">★ ${protCount} protected</span>
+      <span style="color:var(--muted); margin-left:6px;">LFU evicts the least-used when full</span>`;
     drawAreaOnMap(currentAreas[0]);
-    areaSel.addEventListener('change', () => {
-      const a = currentAreas.find(x => x.area_id === areaSel.value);
-      if (a) drawAreaOnMap(a);
-    });
   }
+  // Re-bind on every load (loadAreas can run again after Save Area).
+  areaSel.addEventListener('change', () => {
+    const a = currentAreas.find(x => x.area_id === areaSel.value);
+    if (a) drawAreaOnMap(a);
+  });
+
   async function loadDrones() {
     currentDrones = await (await fetch('/v1/drones')).json();
     droneSel.innerHTML = currentDrones.map(d => {
-      const endur = d.rated_endurance_s ? ` — ${Math.round(d.rated_endurance_s/60)}min endurance` : '';
+      const endur = d.rated_endurance_s ? ` · ${Math.round(d.rated_endurance_s/60)} min endurance` : '';
       return `<option value="${d.profile_id}">${d.profile_id}${endur}</option>`;
     }).join('');
     renderMultiDroneChips();
@@ -687,29 +1087,14 @@ window.addEventListener('DOMContentLoaded', () => {
   function renderMultiDroneChips() {
     const wrap = $('multi-drone-chips');
     wrap.innerHTML = currentDrones.map(d => `
-      <button class="md-chip" data-id="${escapeHtml(d.profile_id)}" type="button" style="
-        background: var(--bg-elev); color: var(--fg-dim);
-        border: 1px solid var(--border); padding: 5px 10px;
-        border-radius: 14px; font-size: 11px; cursor: pointer;
-        font-family: inherit; transition: all 0.15s;
-      ">${escapeHtml(d.profile_id)}</button>
+      <button class="md-chip" data-id="${escapeHtml(d.profile_id)}" type="button">${escapeHtml(d.profile_id)}</button>
     `).join('');
-    wrap.querySelectorAll('.md-chip').forEach(c => c.addEventListener('click', () => {
-      c.classList.toggle('selected');
-      if (c.classList.contains('selected')) {
-        c.style.background = 'var(--accent-soft)';
-        c.style.color = 'var(--accent)';
-        c.style.borderColor = 'var(--accent)';
-      } else {
-        c.style.background = 'var(--bg-elev)';
-        c.style.color = 'var(--fg-dim)';
-        c.style.borderColor = 'var(--border)';
-      }
-    }));
+    wrap.querySelectorAll('.md-chip').forEach(c =>
+      c.addEventListener('click', () => c.classList.toggle('selected')));
   }
 
   $('multi-drone').addEventListener('change', (e) => {
-    $('multi-drone-picker').style.display = e.target.checked ? 'block' : 'none';
+    $('multi-drone-picker').classList.toggle('open', e.target.checked);
   });
 
   // ----- draw area
@@ -719,7 +1104,7 @@ window.addEventListener('DOMContentLoaded', () => {
     if (!area) return;
     const layers = [];
     layers.push(L.geoJSON(area.boundary, {
-      style: { color: '#5b9bff', weight: 2.5, fillOpacity: 0.04, opacity: 0.9, dashArray: '0' }
+      style: { color: '#5b9bff', weight: 2.5, fillOpacity: 0.04, opacity: 0.9 }
     }).bindTooltip(`Boundary · ceiling ${area.ceiling_m}m`, { sticky: true }));
     area.nfzs.forEach((nfz, i) => layers.push(L.geoJSON(nfz, {
       style: { color: '#ef6764', weight: 2, fillOpacity: 0.18, opacity: 0.95 }
@@ -728,7 +1113,7 @@ window.addEventListener('DOMContentLoaded', () => {
       radius: 7, color: '#4ade80', fillColor: '#4ade80', fillOpacity: 1, weight: 2
     }).bindTooltip('Home base', { permanent: false }));
     areaLayer = L.layerGroup(layers).addTo(map);
-    map.fitBounds(L.geoJSON(area.boundary).getBounds(), { padding: [40, 40] });
+    map.fitBounds(L.geoJSON(area.boundary).getBounds(), { padding: [80, 420] });
   }
 
   // ----- violation parser
@@ -785,7 +1170,6 @@ window.addEventListener('DOMContentLoaded', () => {
       const col = legSev ? SEVERITY_COLOR[legSev] : baseCol;
       const dash = legSev ? '6,5' : null;
       if (pts.length >= 2) {
-        // Glow effect: two stacked polylines
         layers.push(L.polyline(pts, { color: col, weight: 7, opacity: 0.18 }));
         const inner = L.polyline(pts, { color: col, weight: 3, opacity: 0.95, dashArray: dash });
         const tip = `Leg ${li+1}: ${leg.leg_type}` +
@@ -808,7 +1192,6 @@ window.addEventListener('DOMContentLoaded', () => {
           weight: wpSev ? 3 : 2,
         }).bindTooltip(tip, { sticky: true });
         if (wpSev === 'hard') {
-          // Add a pulsing halo for hard breaches so they pop visually.
           layers.push(L.circleMarker([w.lat, w.lon], {
             radius: 13, color: wpCol, fillOpacity: 0, weight: 1, opacity: 0.4, dashArray: '3,3',
           }));
@@ -845,14 +1228,21 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   // ----- compile
+  function showResult() { resultCard.classList.remove('hidden'); }
+
   compileBtn.addEventListener('click', async () => {
     const cmd = command.value.trim();
     if (!cmd) { command.focus(); return; }
+    // Fresh top-level compile resets the chat thread; the first user turn is
+    // the command they just typed.
+    resetConversation();
+    conversationHistory.push({ role: 'user', content: cmd });
     compileBtn.disabled = true;
     compileBtn.innerHTML = '<span class="spinner"></span> Compiling…';
+    showResult();
     resultEl.innerHTML = `
       <div class="empty-state">
-        <div class="spinner" style="color: var(--accent);"></div>
+        <span class="spinner" style="color: var(--accent);"></span>
         <div style="margin-top: 10px;">Asking the planner…</div>
       </div>`;
 
@@ -904,6 +1294,15 @@ window.addEventListener('DOMContentLoaded', () => {
   // ----- render result
   function renderResult(body) {
     const p = body.plan;
+
+    // NEEDS_CLARIFICATION → render as a chat thread instead of a one-shot view
+    // (DD-005). conversationHistory carries the prior turns across follow-ups.
+    if (p.status === 'NEEDS_CLARIFICATION') {
+      resultEl.innerHTML = renderClarificationThread(p, body.repair_loops || 0);
+      wireChatInput();
+      return;
+    }
+
     const badgeMap = {
       READY_FOR_APPROVAL: { cls: 'ready', icon: '✓', label: 'Ready for approval' },
       REJECTED: { cls: 'rejected', icon: '✕', label: 'Rejected' },
@@ -951,13 +1350,7 @@ window.addEventListener('DOMContentLoaded', () => {
         <div class="section-title">Alternative plans <span style="color:var(--muted);">(${alts.length + 1} options)</span></div>
         <div style="display: flex; gap: 6px; flex-wrap: wrap;">
           ${allPlans.map((plan, i) => `
-            <button class="alt-chip" data-idx="${i}" style="
-              background: ${i === 0 ? 'var(--accent-soft)' : 'var(--bg-elev)'};
-              color: ${i === 0 ? 'var(--accent)' : 'var(--fg-dim)'};
-              border: 1px solid ${i === 0 ? 'var(--accent)' : 'var(--border)'};
-              padding: 5px 12px; border-radius: 14px; font-size: 11px; cursor: pointer;
-              font-family: inherit; transition: all 0.15s;
-            ">
+            <button class="alt-chip md-chip ${i === 0 ? 'selected' : ''}" data-idx="${i}">
               ${i === 0 ? '★ ' : ''}Plan ${i + 1}
               <span style="opacity: 0.65; margin-left: 4px;">${(plan.total_duration_s/60).toFixed(1)}m · ${plan.total_battery_pct.toFixed(0)}%</span>
             </button>
@@ -1003,7 +1396,7 @@ window.addEventListener('DOMContentLoaded', () => {
       const pct = Math.round(s * 100);
       html += `<div class="section">
         <div class="section-title">Tactical critique <span style="color:${colorVar}">${pct}%</span></div>
-        <div style="background: var(--bg-elev); height: 6px; border-radius: 3px; overflow: hidden; margin: 4px 0 8px;">
+        <div style="background: var(--hairline); height: 6px; border-radius: 3px; overflow: hidden; margin: 4px 0 8px;">
           <div style="width: ${pct}%; height: 100%; background: ${colorVar};"></div>
         </div>
         <div class="reasoning" style="border-left-color: ${colorVar};">${escapeHtml(p.critique_notes || '(no notes)')}</div>
@@ -1046,11 +1439,11 @@ window.addEventListener('DOMContentLoaded', () => {
       html += `<div class="section">
         <div class="section-title">Export</div>
         <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-          <a class="btn btn-ghost" style="padding: 6px 12px; font-size: 12px; text-decoration: none;"
+          <a class="btn btn-ghost" style="padding: 7px 12px; font-size: 12px; text-decoration: none;"
              href="/v1/missions/${encodeURIComponent(p.mission_id)}/export?format=kml" download>KML</a>
-          <a class="btn btn-ghost" style="padding: 6px 12px; font-size: 12px; text-decoration: none;"
+          <a class="btn btn-ghost" style="padding: 7px 12px; font-size: 12px; text-decoration: none;"
              href="/v1/missions/${encodeURIComponent(p.mission_id)}/export?format=gpx" download>GPX</a>
-          <a class="btn btn-ghost" style="padding: 6px 12px; font-size: 12px; text-decoration: none;"
+          <a class="btn btn-ghost" style="padding: 7px 12px; font-size: 12px; text-decoration: none;"
              href="/v1/missions/${encodeURIComponent(p.mission_id)}/export?format=dji" download>DJI / Litchi</a>
         </div>
       </div>`;
@@ -1069,9 +1462,6 @@ window.addEventListener('DOMContentLoaded', () => {
         const all = [currentPlan, ...currentAlternatives];
         const swap = currentPlan === all[idx] ? null : all[idx];
         if (!swap) return;
-        // Swap primary and selected alternative so the chip the user picks
-        // becomes the "current" plan in subsequent actions.
-        const old = currentPlan;
         currentPlan = all[idx];
         currentAlternatives = all.filter((_, i) => i !== idx);
         renderResult({ plan: currentPlan, alternatives: currentAlternatives, repair_loops: currentRepairLoops });
@@ -1102,7 +1492,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   // ----- live simulation (websocket telemetry)
-  let liveSim = null;  // { ws, marker, trail, panel }
+  let liveSim = null;
 
   function stopLiveSim(reason) {
     if (!liveSim) return;
@@ -1121,41 +1511,39 @@ window.addEventListener('DOMContentLoaded', () => {
     const url = `${wsProto}//${location.host}/ws/missions/${encodeURIComponent(currentPlan.mission_id)}/sim?speed=10`;
     const ws = new WebSocket(url);
 
-    // Live drone marker (pulsing) + trail polyline being drawn as frames arrive
     const marker = L.circleMarker([0, 0], {
-      radius: 8, color: '#fff', fillColor: '#5b9bff', fillOpacity: 1, weight: 3,
+      radius: 8, color: '#fff', fillColor: '#0a84ff', fillOpacity: 1, weight: 3,
     });
-    const trail = L.polyline([], { color: '#5b9bff', weight: 4, opacity: 0.8 });
+    const trail = L.polyline([], { color: '#0a84ff', weight: 4, opacity: 0.8 });
 
-    // Floating panel with live telemetry numbers
+    // Floating telemetry panel anchored to the top of the viewport
     const panel = document.createElement('div');
+    panel.className = 'glass';
     panel.style.cssText = `
-      position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
-      background: rgba(17, 23, 38, 0.95); backdrop-filter: blur(10px);
-      border: 1px solid var(--accent); border-radius: var(--radius);
-      padding: 10px 16px; z-index: 1100; min-width: 380px;
-      box-shadow: var(--shadow-2); font-size: 12px;
-      display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;
+      position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
+      border: 1px solid var(--accent);
+      padding: 12px 18px; z-index: 1300; min-width: 420px;
+      font-size: 12px;
+      display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px;
     `;
     panel.innerHTML = `
-      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Status</div><div id="sim-status" style="color:var(--accent); font-weight:600;">connecting…</div></div>
-      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Elapsed</div><div id="sim-t" style="font-family:'JetBrains Mono',monospace;">0.0s</div></div>
-      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Altitude</div><div id="sim-alt" style="font-family:'JetBrains Mono',monospace;">— m</div></div>
-      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Battery</div><div id="sim-bat" style="font-family:'JetBrains Mono',monospace;">—%</div></div>
-      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase;">Leg</div><div id="sim-leg" style="font-family:'JetBrains Mono',monospace;">—</div></div>
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Status</div><div id="sim-status" style="color:var(--accent); font-weight:600; margin-top:2px;">connecting…</div></div>
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Elapsed</div><div id="sim-t" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">0.0s</div></div>
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Altitude</div><div id="sim-alt" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">— m</div></div>
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Battery</div><div id="sim-bat" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">—%</div></div>
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Leg</div><div id="sim-leg" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">—</div></div>
     `;
-    document.querySelector('.map-wrap').appendChild(panel);
+    document.body.appendChild(panel);
     liveSim = { ws, marker, trail, panel };
 
     ws.onopen = () => { panel.querySelector('#sim-status').textContent = 'flying'; };
     ws.onerror = () => { panel.querySelector('#sim-status').textContent = 'ws error'; panel.querySelector('#sim-status').style.color = 'var(--err)'; };
-    ws.onclose = () => { /* terminal frame handles status text */ };
+    ws.onclose = () => {};
 
     ws.onmessage = (evt) => {
       const f = JSON.parse(evt.data);
       if (f.error) { panel.querySelector('#sim-status').textContent = f.error; return; }
       const ll = [f.lat, f.lon];
-      // Lazy-add layers once we have a real position
       if (!marker._added) { marker.addTo(map); trail.addTo(map); marker._added = true; }
       marker.setLatLng(ll);
       trail.addLatLng(ll);
@@ -1173,12 +1561,10 @@ window.addEventListener('DOMContentLoaded', () => {
         statusEl.textContent = f.status;
         statusEl.style.color = f.status === 'done' ? 'var(--ok)' : 'var(--err)';
         if (f.detail) statusEl.title = f.detail;
-        // auto-close after a short pause so the operator can see the final state
         setTimeout(() => stopLiveSim('done'), 5000);
       }
     };
 
-    // Esc cancels
     const escHandler = (e) => { if (e.key === 'Escape') { stopLiveSim('esc'); document.removeEventListener('keydown', escHandler); } };
     document.addEventListener('keydown', escHandler);
   }
@@ -1212,7 +1598,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   // ----- area editor (Leaflet.draw)
-  let editorState = null;  // { drawnItems, draftBoundary, draftNfzs, draftHome, controls }
+  let editorState = null;
   $('edit-area-btn').addEventListener('click', startEditor);
   $('cancel-area-btn').addEventListener('click', endEditor);
   $('save-area-btn').addEventListener('click', saveArea);
@@ -1229,16 +1615,16 @@ window.addEventListener('DOMContentLoaded', () => {
       position: 'topleft',
       edit: { featureGroup: drawnItems, remove: true },
       draw: {
-        polygon: { shapeOptions: { color: '#5b9bff', weight: 2 } },
+        polygon: { shapeOptions: { color: '#0a84ff', weight: 2 } },
         polyline: false, rectangle: false, circle: false, circlemarker: false,
-        marker: true,  // used to pick home base
+        marker: true,
       },
     });
     map.addControl(controls);
 
     editorState = { drawnItems, draftBoundary: null, draftNfzs: [], draftHome: null, controls };
     $('editor-panel').classList.add('open');
-    $('edit-area-btn').style.display = 'none';
+    $('edit-area-btn').parentElement.style.display = 'none';
     setEditorStatus('draw boundary first');
 
     map.on(L.Draw.Event.CREATED, onShapeCreated);
@@ -1250,11 +1636,10 @@ window.addEventListener('DOMContentLoaded', () => {
     if (e.layerType === 'polygon') {
       if (!editorState.draftBoundary) {
         editorState.draftBoundary = layer;
-        layer.setStyle({ color: '#5b9bff', weight: 2.5, fillOpacity: 0.04 });
+        layer.setStyle({ color: '#0a84ff', weight: 2.5, fillOpacity: 0.04 });
         editorState.drawnItems.addLayer(layer);
         setEditorStatus('boundary set · add NFZs or click home marker');
       } else {
-        // subsequent polygons → NFZs
         layer.setStyle({ color: '#ef6764', weight: 2, fillOpacity: 0.18 });
         editorState.drawnItems.addLayer(layer);
         editorState.draftNfzs.push(layer);
@@ -1276,8 +1661,7 @@ window.addEventListener('DOMContentLoaded', () => {
     map.off(L.Draw.Event.CREATED, onShapeCreated);
     editorState = null;
     $('editor-panel').classList.remove('open');
-    $('edit-area-btn').style.display = '';
-    // restore previous area on the map
+    $('edit-area-btn').parentElement.style.display = '';
     const a = currentAreas.find(x => x.area_id === areaSel.value) || currentAreas[0];
     if (a) drawAreaOnMap(a);
   }
@@ -1306,7 +1690,6 @@ window.addEventListener('DOMContentLoaded', () => {
       const resp = await r.json();
       if (!r.ok) throw new Error(resp.detail || `HTTP ${r.status}`);
       setEditorStatus(`saved · home snapped to ${resp.home_lat.toFixed(5)},${resp.home_lon.toFixed(5)}`);
-      // reload areas + select the new one
       await loadAreas();
       areaSel.value = id;
       const a = currentAreas.find(x => x.area_id === id);
@@ -1320,25 +1703,35 @@ window.addEventListener('DOMContentLoaded', () => {
   // ----- history drawer
   const drawer = $('drawer');
   const historyBody = $('history-body');
-  $('open-history').addEventListener('click', (e) => {
+  const openHistoryBtn = $('open-history');
+  openHistoryBtn.addEventListener('click', (e) => {
     e.preventDefault();
     drawer.classList.add('open');
     drawer.setAttribute('aria-hidden', 'false');
+    openHistoryBtn.classList.add('active');
     loadHistory();
   });
   $('close-history').addEventListener('click', () => {
     drawer.classList.remove('open');
     drawer.setAttribute('aria-hidden', 'true');
+    openHistoryBtn.classList.remove('active');
+  });
+  // close on Escape
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && drawer.classList.contains('open')) {
+      drawer.classList.remove('open');
+      openHistoryBtn.classList.remove('active');
+    }
   });
 
   async function loadHistory() {
-    historyBody.innerHTML = `<div class="empty-state"><div class="spinner" style="color: var(--accent);"></div><div style="margin-top: 8px;">Loading missions…</div></div>`;
+    historyBody.innerHTML = `<div class="empty-state"><span class="spinner" style="color: var(--accent);"></span><div style="margin-top: 8px;">Loading missions…</div></div>`;
     try {
       const r = await fetch('/v1/missions?limit=50');
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const items = await r.json();
       if (!items.length) {
-        historyBody.innerHTML = `<div class="empty-state"><div class="empty-icon">📜</div><div>No missions yet. Compile one to populate history.</div></div>`;
+        historyBody.innerHTML = `<div class="empty-state"><span class="empty-icon">📜</span>No missions yet. Compile one to populate history.</div>`;
         return;
       }
       const badgeCls = { READY_FOR_APPROVAL: 'ready', REJECTED: 'rejected', NEEDS_CLARIFICATION: 'clarification' };
@@ -1354,7 +1747,7 @@ window.addEventListener('DOMContentLoaded', () => {
             <span class="mini-badge ${cls}">${m.status.replace('_', ' ').toLowerCase()}</span>
           </div>
           <div class="mr-area">${escapeHtml(m.area_id || '—')} ${approvalTag}</div>
-          <div class="mr-meta"><span>${escapeHtml(when)}</span></div>
+          <div class="mr-meta">${escapeHtml(when)}</div>
         </div>`;
       }).join('');
       historyBody.querySelectorAll('.mission-row').forEach(row => {
@@ -1370,22 +1763,237 @@ window.addEventListener('DOMContentLoaded', () => {
       const r = await fetch('/v1/missions/' + encodeURIComponent(mid));
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const plan = await r.json();
-      // Switch area selector if needed so the boundary matches the loaded plan.
       if (areaId && areaSel.value !== areaId) {
         areaSel.value = areaId;
         const a = currentAreas.find(x => x.area_id === areaId);
         if (a) drawAreaOnMap(a);
       }
       currentPlan = plan;
+      showResult();
       renderResult({ plan, repair_loops: 0 });
       drawPlanOnMap(plan, plan.rejection_reasons || []);
       drawer.classList.remove('open');
       drawer.setAttribute('aria-hidden', 'true');
+      openHistoryBtn.classList.remove('active');
     } catch (e) {
       historyBody.insertAdjacentHTML('afterbegin',
         `<div class="toast err" style="margin: 0 0 10px;">Load failed: ${escapeHtml(e.message)}</div>`);
     }
   }
+
+  // ===========================================================
+  // CHAT-STYLE CLARIFICATION THREAD (DD-005)
+  // ===========================================================
+  // When the planner returns NEEDS_CLARIFICATION, we keep the prior turns in
+  // memory and feed them to the next compile as `conversation_history`. The
+  // backend converts each turn into a LangChain HumanMessage / AIMessage so
+  // the LLM gets full conversational context. Reset on a new compile from
+  // scratch or when the user closes the result card.
+  let conversationHistory = [];
+
+  function resetConversation() { conversationHistory = []; }
+
+  function chatBubble(role, content, cls = '') {
+    return `<div class="chat-bubble ${role} ${cls}">${content}</div>`;
+  }
+
+  function renderClarificationThread(p, repairs) {
+    // Append the new assistant turn to the conversation log so it persists
+    // for the next follow-up compile.
+    const questionsText = (p.clarification_questions || []).map(q => `• ${q}`).join('\n');
+    conversationHistory.push({
+      role: 'assistant',
+      content: questionsText || 'Please clarify the mission.',
+    });
+    const html = conversationHistory.map(t => {
+      if (t.role === 'user') return chatBubble('user', escapeHtml(t.content));
+      const lines = t.content.split('\n').map(l => l.replace(/^•\s?/, '').trim()).filter(Boolean);
+      const listHtml = `<strong>Planner needs clarification:</strong><ul>${lines.map(l => `<li>${escapeHtml(l)}</li>`).join('')}</ul>`;
+      return chatBubble('assistant', listHtml, 'questions');
+    }).join('');
+    return `
+      <div class="status-bar">
+        <span class="badge clarification"><span class="badge-icon">?</span>Needs clarification</span>
+        <div class="status-meta">
+          <span class="pill">${escapeHtml(p.mission_id || 'pending')}</span>
+          <span>${repairs} repair${repairs === 1 ? '' : 's'}</span>
+        </div>
+      </div>
+      <div class="chat-thread" id="chat-thread">${html}</div>
+      <div class="chat-input-row">
+        <textarea id="chat-input" placeholder="Reply with the clarification… (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
+        <button class="chat-send" id="chat-send" title="Send (Enter)">
+          <svg viewBox="0 0 24 24"><path d="M5 12l14-7-7 14-2-5-5-2z"/></svg>
+        </button>
+      </div>`;
+  }
+
+  function wireChatInput() {
+    const inp = $('chat-input');
+    const send = $('chat-send');
+    if (!inp || !send) return;
+    inp.focus();
+    inp.addEventListener('input', () => {
+      inp.style.height = 'auto';
+      inp.style.height = Math.min(inp.scrollHeight, 100) + 'px';
+    });
+    const submit = async () => {
+      const reply = inp.value.trim();
+      if (!reply) return;
+      conversationHistory.push({ role: 'user', content: reply });
+      inp.value = '';
+      send.disabled = true;
+      send.innerHTML = '<span class="spinner"></span>';
+      try {
+        // The "command" for the new compile is the latest reply — the planner
+        // gets the full prior thread via conversation_history.
+        await compileWithHistory(reply);
+      } finally {
+        send.disabled = false;
+        send.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 12l14-7-7 14-2-5-5-2z" stroke="currentColor" fill="none" stroke-width="2"/></svg>';
+      }
+    };
+    send.addEventListener('click', submit);
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+    });
+  }
+
+  async function compileWithHistory(command) {
+    showResult();
+    const payload = {
+      command,
+      area_id: areaSel.value,
+      operator_clearance: 'STANDARD',
+      drone_state: { drone_profile_id: droneSel.value, battery_pct: +battery.value },
+      alternatives: false,
+      conversation_history: conversationHistory.slice(0, -1),  // exclude the just-pushed user turn (sent as `command`)
+    };
+    try {
+      const r = await fetch('/v1/missions:compile', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+      currentPlan = body.plan;
+      currentAlternatives = body.alternatives || [];
+      currentRepairLoops = body.repair_loops || 0;
+      currentGroup = body.group_plans || [];
+      renderResult(body);
+      if (currentGroup.length > 1) drawGroupOnMap(currentGroup);
+      else drawPlanOnMap(body.plan, body.plan.rejection_reasons || []);
+    } catch (e) {
+      const note = document.createElement('div');
+      note.className = 'toast err'; note.textContent = 'Follow-up failed: ' + e.message;
+      resultEl.appendChild(note);
+    }
+  }
+
+  // ===========================================================
+  // + ADD AREA / + ADD DRONE — discoverability
+  // ===========================================================
+  $('add-area-btn').addEventListener('click', () => startEditor());
+  $('add-drone-btn').addEventListener('click', () => openDroneModal());
+
+  function openDroneModal() {
+    $('dp-status').textContent = '';
+    $('drone-modal').classList.add('open');
+    setTimeout(() => $('dp-id').focus(), 50);
+  }
+  function closeDroneModal() { $('drone-modal').classList.remove('open'); }
+  $('dp-cancel').addEventListener('click', closeDroneModal);
+  $('drone-modal').addEventListener('click', (e) => {
+    if (e.target === $('drone-modal')) closeDroneModal();
+  });
+
+  $('dp-save').addEventListener('click', async () => {
+    const payload = {
+      profile_id: $('dp-id').value.trim(),
+      rated_endurance_s: parseFloat($('dp-endur').value) * 60,
+      cruise_speed_mps: parseFloat($('dp-speed').value),
+      climb_rate_mps: parseFloat($('dp-climb').value),
+      battery_wh: parseFloat($('dp-batt').value),
+      cruise_power_w: parseFloat($('dp-cruisew').value),
+      hover_power_w: parseFloat($('dp-hoverw').value),
+      description: $('dp-desc').value.trim(),
+    };
+    if (!payload.profile_id) { $('dp-status').textContent = 'Profile ID required'; return; }
+    if (!isFinite(payload.rated_endurance_s) || payload.rated_endurance_s <= 0) {
+      $('dp-status').textContent = 'Endurance must be > 0'; return;
+    }
+    $('dp-status').textContent = 'Saving…';
+    try {
+      const r = await fetch('/v1/drones', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+      await loadDrones();
+      droneSel.value = payload.profile_id;
+      closeDroneModal();
+    } catch (e) {
+      $('dp-status').textContent = 'Save failed: ' + e.message;
+    }
+  });
+
+  // ===========================================================
+  // ✨ LLM AREA RESEARCH (DD-007)
+  // ===========================================================
+  let researchedNfzLayers = [];
+
+  $('research-area-btn').addEventListener('click', async () => {
+    if (!editorState || !editorState.draftBoundary) {
+      setEditorStatus('draw a boundary first'); return;
+    }
+    const btn = $('research-area-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Researching…';
+    const rDiv = $('research-result');
+    rDiv.style.display = 'block';
+    rDiv.innerHTML = 'Asking the LLM about this area…';
+    try {
+      const home = editorState.draftHome
+        ? editorState.draftHome.getLatLng()
+        : editorState.draftBoundary.getBounds().getCenter();
+      const payload = {
+        boundary: editorState.draftBoundary.toGeoJSON().geometry,
+        home_lon: home.lng, home_lat: home.lat,
+      };
+      const r = await fetch('/v1/areas:research', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+      // Pre-fill ceiling.
+      $('new-ceiling').value = String(body.ceiling_m || 120);
+      // Clear any prior research NFZs and draw the new suggestions as editable.
+      researchedNfzLayers.forEach(l => editorState.drawnItems.removeLayer(l));
+      researchedNfzLayers = [];
+      (body.suggested_nfzs || []).forEach(geom => {
+        try {
+          const layer = L.geoJSON(geom, {
+            style: { color: '#ef6764', weight: 2, fillOpacity: 0.18, dashArray: '4,4' }
+          }).getLayers()[0];
+          if (!layer) return;
+          editorState.drawnItems.addLayer(layer);
+          editorState.draftNfzs.push(layer);
+          researchedNfzLayers.push(layer);
+        } catch (_) {}
+      });
+      const permTxt = body.flight_permitted
+        ? '<span style="color:var(--ok)">✓ Flight likely permitted</span>'
+        : '<span style="color:var(--err)">⚠ LLM flagged this area as restricted</span>';
+      rDiv.innerHTML = `${permTxt}<br>${escapeHtml(body.notes)}<br><span style="color:var(--muted); font-size:10px;">Advisory only — review before saving.</span>`;
+      setEditorStatus(`research: ceiling=${body.ceiling_m}m · ${body.suggested_nfzs.length} suggested NFZ${body.suggested_nfzs.length===1?'':'s'}`);
+    } catch (e) {
+      rDiv.innerHTML = `<span style="color:var(--err)">Research failed: ${escapeHtml(e.message)}</span>`;
+    } finally {
+      btn.disabled = false; btn.innerHTML = '✨ Research area';
+    }
+  });
 
   loadAreas();
   loadDrones();

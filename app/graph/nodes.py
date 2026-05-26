@@ -17,6 +17,7 @@ import json
 import time
 
 from langchain.chat_models import init_chat_model
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.config import get_settings
 from app.observability.metrics import (
@@ -330,15 +331,26 @@ def plan_node(state: CompileState) -> dict[str, Any]:
         )
     user_msg = "\n".join(user_msg_parts)
 
+    # Conversation history (DD-005): when the operator answers a clarification
+    # question from a prior turn, we feed the prior turns to the LLM as proper
+    # LangChain message objects so the planner has full context, not just the
+    # latest follow-up. Empty for fresh missions.
+    convo = state.get("conversation_history") or []
+    history_msgs: list[Any] = []
+    for turn in convo:
+        role = turn.get("role")
+        content = turn.get("content", "")
+        if role == "user":
+            history_msgs.append(HumanMessage(content=content))
+        elif role == "assistant":
+            history_msgs.append(AIMessage(content=content))
+
     settings = get_settings()
     provider, model = settings.llm_provider, settings.llm_model
     start = time.perf_counter()
     try:
         ai_msg = llm.invoke(
-            [
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg},
-            ]
+            [SystemMessage(content=_SYSTEM_PROMPT), *history_msgs, HumanMessage(content=user_msg)]
         )
     except Exception as e:  # noqa: BLE001
         log.exception("llm.invoke raised: %s", e)

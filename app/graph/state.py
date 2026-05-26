@@ -41,4 +41,8 @@ class CompileState(TypedDict, total=False):
     alternatives_requested: bool
     multi_drone_slot: dict[str, Any] | None  # see DESIGN_DECISIONS §9
     _deconfliction: tuple[bool, list[str]] | None  # see DESIGN_DECISIONS §8
+    # Operator chat thread carried between compiles when the planner returned
+    # NEEDS_CLARIFICATION. Each entry is {role: "user"|"assistant", content: str}.
+    # See docs/DESIGN_DECISIONS.md#DD-005.
+    conversation_history: list[dict[str, str]]
     messages: Annotated[list, add_messages]

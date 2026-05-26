@@ -477,3 +477,120 @@ ever becomes a real production service with multiple operators changing the
 schema, swap to Alembic.
 
 **Where in code.** `app/geo/store.py` — `DDL` constant + `init_schema()`.
+
+---
+
+## DD-005 — Chat-style clarification thread (UI-local, no new tables)
+
+**Decision.** When `plan_node` returns `NEEDS_CLARIFICATION`, the result panel
+becomes a scrollable chat thread. The operator types follow-ups in an input
+box; the UI keeps a `conversationHistory` array of `{role, content}` turns and
+sends them on every subsequent compile via a new `conversation_history` field
+on `CompileRequest`. The planner converts each turn into LangChain
+`HumanMessage` / `AIMessage` objects and feeds the full sequence to
+`llm.invoke([SystemMessage, ...history, HumanMessage(new_user_msg)])`.
+
+**Why.** The original flow forced operators to re-write the whole command
+every time the planner needed clarification — even small refinements lost
+context. A chat thread is the natural mental model for "I want to refine a
+mission" and the planner already has the necessary infrastructure
+(`init_chat_model` + LangChain message types) to consume it. Keeping
+conversation state in the UI (not the DB) means no new tables and no
+mission_id rewrites: the prior turns are *context*, not first-class records.
+
+**Trade-off.** Conversation does not survive a page reload — once the operator
+closes the tab, the thread is gone. Acceptable for a single-operator demo;
+revisit when multi-user / audit-trail requirements show up. We also currently
+re-send the whole thread on every follow-up; the LangChain `add_messages`
+reducer on `state.messages` could carry it inside the graph state instead
+(via the LangGraph checkpointer) if we want server-side persistence.
+
+**Where in code.** `app/graph/state.py` (`conversation_history` field),
+`app/graph/nodes.py` (`plan_node` builds `[SystemMessage, *history_msgs,
+HumanMessage(user_msg)]`), `app/api/models.py` (`CompileRequest`),
+`app/api/routes.py` (`_invoke_compile_graph` threading),
+`app/static/index.html` (`renderClarificationThread`, `compileWithHistory`).
+
+---
+
+## DD-006 — Operator-authored drone profiles via POST /v1/drones
+
+**Decision.** Drones live in the same `drones` table as the YAML-seeded ones;
+operators add new ones via a modal form (`POST /v1/drones`). Seeded profiles
+are marked `protected = TRUE` so they always appear and aren't accidentally
+overwritten by an operator using the same `profile_id`. (Currently upsert
+semantics — same id replaces — but the protected flag means the seeded ones
+get re-protected on every `init_schema` run.)
+
+**Why.** Discoverability — the operator UI previously offered no way to add a
+drone without rebuilding the container. The form takes the same fields the
+YAML schema requires (endurance, cruise/climb, battery, hover/cruise power)
+so the safety kernel and physics model work unchanged.
+
+**Trade-off.** Sensor configuration in the modal is a minimal default
+(one EO sensor with reasonable specs). Multi-sensor payloads still require
+editing JSON directly via the API — an acceptable simplification given the
+demo audience.
+
+**Where in code.** `app/api/models.py` (`DroneUpsertRequest`),
+`app/api/routes.py` (`upsert_drone_endpoint`), `app/geo/store.py`
+(`upsert_drone`, `list_drones` exposes `protected`),
+`app/static/index.html` (drone modal + handler).
+
+---
+
+## DD-007 — LLM-driven area research (advisory, not authoritative)
+
+**Decision.** When the operator draws a new boundary, a "✨ Research area"
+button calls `POST /v1/areas:research`, which sends the polygon to the
+planner LLM with a structured-output prompt asking for: `flight_permitted`,
+`ceiling_m`, `suggested_nfzs` (GeoJSON polygons), `notes`. The UI pre-fills
+the ceiling field and draws the suggested NFZs as editable polygons. The
+operator can delete or modify any of them before saving.
+
+**Why.** Operators don't have FAA charts or terrain DEMs at their fingertips,
+and we explicitly forbid proprietary airspace data (per CLAUDE.md). The LLM
+has plausible knowledge about famous landmarks, urban areas, airports, etc.
+from training data — that's good enough for an advisory hint that beats
+"start from a blank polygon". The deterministic safety kernel still
+re-validates everything at compile time, so this never substitutes for real
+safety checks; it just speeds up area setup.
+
+**Trade-off.** The LLM can hallucinate NFZs that aren't real, or miss real
+ones it doesn't recognize. We make it clear in the UI that the output is
+ADVISORY and the operator must review. For a real-airspace integration
+(OpenAIP, OpenStreetMap, USGS DEM) we'd add it as a separate provider in
+parallel; the existing endpoint contract stays the same.
+
+**Where in code.** `app/api/models.py` (`AreaResearchRequest/Response`),
+`app/api/routes.py` (`research_area_endpoint` — reuses `_llm_lazy()` from
+`graph/nodes.py` and LangChain `SystemMessage`/`HumanMessage` primitives),
+`app/static/index.html` (research button handler + draws suggested NFZs as
+dashed editable polygons).
+
+---
+
+## DD-008 — LFU cap (10) on operator-authored areas
+
+**Decision.** The `areas` table gains three columns: `access_count`,
+`last_accessed_at`, `protected`. Each successful compile bumps the chosen
+area's counters. On `POST /v1/areas`, if there are 10 or more *non-protected*
+areas, evict the LFU (lowest `access_count`, oldest `last_accessed_at` as
+tiebreak). Seeded areas (`yard-simple`, `farmland-complex`) are
+`protected = TRUE` and never count toward the cap or get evicted.
+
+**Why.** Operator-authored areas accumulate (every "draw + save") and clutter
+the dropdown. A hard cap with LFU eviction keeps the workspace tidy without
+asking the operator to manage cleanup. Protecting the seeded areas means
+the demo defaults never disappear no matter what the operator does.
+
+**Trade-off.** Eviction is silent — the operator sees the new area appear and
+doesn't get a "we removed X" toast. For a real product we'd surface evicted
+ids on the response and confirm interactively. The cap of 10 is arbitrary;
+plumb through `app/geo/store.py:AREA_LFU_CAP` if it needs tuning.
+
+**Where in code.** `app/geo/store.py` (`AREA_LFU_CAP`,
+`evict_lfu_area_if_needed`, `touch_area_access`, additive DDL),
+`app/api/routes.py` (eviction call in `upsert_area_endpoint`, access bump
+in `compile_mission`), `app/static/index.html` (`area-foot` shows
+`N/10 user · M protected`).
