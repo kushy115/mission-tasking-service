@@ -21,7 +21,7 @@ once per event, not per tick.
 from __future__ import annotations
 
 import math
-from typing import Iterable
+from collections.abc import Iterable
 
 from shapely.geometry import LineString, Point, Polygon, shape
 
@@ -49,12 +49,12 @@ _EMERGENCY_LAND_ALT_M: float = 10.0
 def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     """Great-circle distance (meters) — duplicated locally to avoid importing
     the physics module here (keeps this file pure-Python + shapely only)."""
-    R = 6_371_000.0
+    earth_r_m = 6_371_000.0
     p1, p2 = math.radians(lat1), math.radians(lat2)
     dp = math.radians(lat2 - lat1)
     dl = math.radians(lon2 - lon1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * R * math.asin(math.sqrt(a))
+    return 2 * earth_r_m * math.asin(math.sqrt(a))
 
 
 def _remaining_path_intersects(remaining_legs: list[dict], polygon: Polygon) -> bool:
@@ -68,9 +68,8 @@ def _remaining_path_intersects(remaining_legs: list[dict], polygon: Polygon) -> 
         for x, y in pts:
             if polygon.covers(Point(x, y)):
                 return True
-        if len(pts) >= 2:
-            if LineString(pts).intersects(polygon):
-                return True
+        if len(pts) >= 2 and LineString(pts).intersects(polygon):
+            return True
     return False
 
 
@@ -149,7 +148,7 @@ def decide(
             extra = float(ev.payload.get("extra_drain_pct_s") or 0.0)
             # Project remaining battery if this fault sustains over the remaining
             # flight time. Use the leftover legs' est_duration as upper bound.
-            remaining_s = sum(float(l.get("est_duration_s") or 0.0) for l in remaining_legs)
+            remaining_s = sum(float(leg.get("est_duration_s") or 0.0) for leg in remaining_legs)
             projected_drain = remaining_batt - extra * remaining_s - rtb_cost_pct
             if projected_drain < _SUPERVISOR_RESERVE_MARGIN_PCT:
                 return (
@@ -183,8 +182,7 @@ def decide(
             if wind > settings.weather_max_wind_mps:
                 return (
                     SupervisorDecision.RTB_NOW,
-                    f"wind {wind:.1f} m/s > tolerance "
-                    f"{settings.weather_max_wind_mps:.1f} m/s",
+                    f"wind {wind:.1f} m/s > tolerance {settings.weather_max_wind_mps:.1f} m/s",
                 )
             continue
 

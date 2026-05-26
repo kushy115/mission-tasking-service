@@ -74,6 +74,7 @@ def _approx_lateral_buffer_deg(lat: float) -> float:
     targets. 1 deg lat ≈ 111_000 m; 1 deg lon ≈ 111_000 * cos(lat).
     """
     import math
+
     cos_lat = max(math.cos(math.radians(lat)), 0.01)
     # Use the larger of the two scales for a conservative buffer.
     return LATERAL_SEP_M / (111_000.0 * cos_lat)

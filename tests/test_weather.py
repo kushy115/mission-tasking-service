@@ -23,8 +23,15 @@ def profile() -> DroneProfile:
         battery_wh=300.0,
         cruise_power_w=300.0,
         hover_power_w=400.0,
-        sensors=(SensorSpec(name="eo", mode=SensorMode.EO, power_w=10,
-                            half_angle_deg=30, ground_resolution_at_100m=0.05),),
+        sensors=(
+            SensorSpec(
+                name="eo",
+                mode=SensorMode.EO,
+                power_w=10,
+                half_angle_deg=30,
+                ground_resolution_at_100m=0.05,
+            ),
+        ),
     )
 
 
@@ -46,20 +53,24 @@ def _simple_plan() -> MissionPlan:
         status="READY_FOR_APPROVAL",
         legs=[
             MissionLeg(
-                leg_type=LegType.TRANSIT, sensor_mode=SensorMode.EO,
+                leg_type=LegType.TRANSIT,
+                sensor_mode=SensorMode.EO,
                 geometry=[
                     Waypoint(lat=40.72, lon=-74.17, alt_m=40),
                     Waypoint(lat=40.725, lon=-74.165, alt_m=60),
                 ],
-                est_duration_s=10, est_battery_pct=2,
+                est_duration_s=10,
+                est_battery_pct=2,
             ),
             MissionLeg(
-                leg_type=LegType.RETURN_TO_BASE, sensor_mode=SensorMode.OFF,
+                leg_type=LegType.RETURN_TO_BASE,
+                sensor_mode=SensorMode.OFF,
                 geometry=[
                     Waypoint(lat=40.725, lon=-74.165, alt_m=60),
                     Waypoint(lat=40.72, lon=-74.17, alt_m=30),
                 ],
-                est_duration_s=10, est_battery_pct=2,
+                est_duration_s=10,
+                est_battery_pct=2,
             ),
         ],
     )
@@ -72,7 +83,7 @@ def test_synthetic_weather_is_deterministic():
     assert a.source == "synthetic"
 
 
-def test_provider_cache_dedupes(monkeypatch):
+def test_provider_cache_dedupes():
     clear_cache()
     obs1 = get_weather_for_area(40.0, -74.0)
     obs2 = get_weather_for_area(40.0, -74.0)
@@ -82,8 +93,13 @@ def test_provider_cache_dedupes(monkeypatch):
 def test_kernel_rejects_high_wind(profile, geo):
     plan = _simple_plan()
     high_wind = WeatherObservation(
-        wind_mps=20.0, gust_mps=22.0, wind_dir_deg=180,
-        visibility_m=10000, precipitation_mmh=0, temperature_c=15, source="t",
+        wind_mps=20.0,
+        gust_mps=22.0,
+        wind_dir_deg=180,
+        visibility_m=10000,
+        precipitation_mmh=0,
+        temperature_c=15,
+        source="t",
     )
     violations, report = validate_plan(plan, geo, profile, weather=high_wind)
     assert not report.weather_acceptable
@@ -93,8 +109,13 @@ def test_kernel_rejects_high_wind(profile, geo):
 def test_kernel_rejects_low_visibility_with_eo(profile, geo):
     plan = _simple_plan()
     foggy = WeatherObservation(
-        wind_mps=2, gust_mps=3, wind_dir_deg=0,
-        visibility_m=800, precipitation_mmh=0, temperature_c=12, source="t",
+        wind_mps=2,
+        gust_mps=3,
+        wind_dir_deg=0,
+        visibility_m=800,
+        precipitation_mmh=0,
+        temperature_c=12,
+        source="t",
     )
     violations, report = validate_plan(plan, geo, profile, weather=foggy)
     assert not report.weather_acceptable
@@ -104,8 +125,13 @@ def test_kernel_rejects_low_visibility_with_eo(profile, geo):
 def test_kernel_passes_mild_weather(profile, geo):
     plan = _simple_plan()
     mild = WeatherObservation(
-        wind_mps=2, gust_mps=4, wind_dir_deg=90,
-        visibility_m=10000, precipitation_mmh=0, temperature_c=18, source="t",
+        wind_mps=2,
+        gust_mps=4,
+        wind_dir_deg=90,
+        visibility_m=10000,
+        precipitation_mmh=0,
+        temperature_c=18,
+        source="t",
     )
     violations, report = validate_plan(plan, geo, profile, weather=mild)
     assert report.weather_acceptable

@@ -126,9 +126,7 @@ def replan_node(state: SupervisorState) -> dict[str, Any]:
             battery_reserve_pct=max(
                 0.0, starting - (transit.est_battery_pct + rtb.est_battery_pct)
             ),
-            reasoning_trace=(
-                "Supervisor-generated replan: direct-to-home from current position."
-            ),
+            reasoning_trace=("Supervisor-generated replan: direct-to-home from current position."),
         )
         return {"replan_plan": plan.model_dump()}
     except Exception as e:  # noqa: BLE001
@@ -142,7 +140,7 @@ def replan_node(state: SupervisorState) -> dict[str, Any]:
         }
 
 
-def commit_node(state: SupervisorState) -> dict[str, Any]:
+def commit_node(state: SupervisorState) -> dict[str, Any]:  # noqa: ARG001 — graph terminus, signature required
     """Terminal node: passes the chosen decision through unchanged.
 
     Exists as an explicit graph terminus so future extensions (logging,

@@ -25,7 +25,7 @@ def lawnmower(
     height_m: float,
     spacing_m: float,
     altitude_m: float,
-    bearing_deg: float = 0.0,
+    bearing_deg: float = 0.0,  # noqa: ARG001 — informational; rotation is a future extension
 ) -> list[Waypoint]:
     """Boustrophedon parallel-track pattern. East-aligned by default.
 
@@ -56,7 +56,7 @@ def lawnmower(
 
 
 def lawnmower_fit_to_boundary(
-    boundary: "Polygon",  # noqa: F821 — shapely Polygon, deferred import
+    boundary: Polygon,  # noqa: F821 — shapely Polygon, deferred import
     altitude_m: float,
     swath_m: float,
     spacing_factor: float = 0.85,

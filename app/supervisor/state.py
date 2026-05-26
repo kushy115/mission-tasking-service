@@ -8,13 +8,11 @@ decide → (maybe replan) → commit, and returns the outcome.
 
 from __future__ import annotations
 
-import enum
+from enum import StrEnum
 from typing import Any, TypedDict
 
-from app.supervisor.events import Event
 
-
-class SupervisorDecision(str, enum.Enum):
+class SupervisorDecision(StrEnum):
     """One of five terminal decisions per supervisor invocation.
 
     The orchestrator translates each decision into a concrete plan mutation:
@@ -47,14 +45,14 @@ class SupervisorState(TypedDict, total=False):
     mission_id: str
     area_id: str
     drone_profile_id: str
-    current_telemetry: dict[str, Any]    # t, lat, lon, alt_m, battery_pct, leg_idx, ...
+    current_telemetry: dict[str, Any]  # t, lat, lon, alt_m, battery_pct, leg_idx, ...
     remaining_legs: list[dict[str, Any]]  # serialized MissionLeg dicts after current leg
-    home: tuple[float, float]             # (lon, lat)
+    home: tuple[float, float]  # (lon, lat)
     altitude_ceiling_m: float
-    events: list[dict[str, Any]]          # Event.to_dict() list — usually 0–2 per tick
+    events: list[dict[str, Any]]  # Event.to_dict() list — usually 0–2 per tick
 
     # Outputs.
-    decision: str                          # SupervisorDecision value
-    decision_reason: str                   # human-readable why
-    replan_plan: dict[str, Any] | None    # MissionPlan dict if REPLAN_FROM_HERE
+    decision: str  # SupervisorDecision value
+    decision_reason: str  # human-readable why
+    replan_plan: dict[str, Any] | None  # MissionPlan dict if REPLAN_FROM_HERE
     error: str | None

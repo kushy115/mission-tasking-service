@@ -52,8 +52,13 @@ class DroneUpsertRequest(BaseModel):
     description: str = ""
     sensors: list[dict] = Field(
         default_factory=lambda: [
-            {"name": "nadir_eo", "mode": "EO", "power_w": 10.0,
-             "half_angle_deg": 30.0, "ground_resolution_at_100m": 0.04},
+            {
+                "name": "nadir_eo",
+                "mode": "EO",
+                "power_w": 10.0,
+                "half_angle_deg": 30.0,
+                "ground_resolution_at_100m": 0.04,
+            },
         ]
     )
 

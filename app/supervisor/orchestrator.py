@@ -24,7 +24,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from app.schemas.enums import LegType
 from app.schemas.plan import MissionLeg, MissionPlan, Waypoint
@@ -37,8 +38,8 @@ from app.validation.physics import DroneProfile, estimate_leg
 
 log = logging.getLogger(__name__)
 
-DECIDE_EVERY_N_TICKS = 5            # ~1 Hz at the default SIM_DT_S=0.2s
-MAX_REPLANS_PER_SESSION = 3         # safety cap; mirrors compile-loop repair cap
+DECIDE_EVERY_N_TICKS = 5  # ~1 Hz at the default SIM_DT_S=0.2s
+MAX_REPLANS_PER_SESSION = 3  # safety cap; mirrors compile-loop repair cap
 
 
 def _build_rtb_plan(
@@ -181,16 +182,17 @@ async def live_mission_session(
     try:
         while True:
             stream = telemetry_stream(
-                current_plan, profile, geo,
-                starting_battery_pct=starting_pct, speed=speed,
+                current_plan,
+                profile,
+                geo,
+                starting_battery_pct=starting_pct,
+                speed=speed,
             )
             swap_pending = None  # (decision, new_plan, reason, events)
 
-            last_frame: dict[str, Any] | None = None
             async for frame in stream:
                 tick += 1
                 f_dict = frame.to_dict()
-                last_frame = f_dict
                 yield {"kind": "telemetry", **f_dict}
                 if frame.status != "flying":
                     return  # terminal frame; session over
@@ -204,7 +206,7 @@ async def live_mission_session(
                 # (We still run periodically to catch the always-on battery margin check.)
 
                 remaining_legs = [
-                    l.model_dump() for l in current_plan.legs[frame.leg_idx + 1:]
+                    leg.model_dump() for leg in current_plan.legs[frame.leg_idx + 1 :]
                 ]
                 state: dict[str, Any] = {
                     "mission_id": mission_id,
@@ -274,8 +276,11 @@ async def live_mission_session(
                                 current_lat=f_dict["lat"],
                                 current_lon=f_dict["lon"],
                                 current_alt=f_dict["alt_m"],
-                                home_lon=home_lon, home_lat=home_lat,
-                                ceiling_m=ceiling_m, area_id=area_id, profile=profile,
+                                home_lon=home_lon,
+                                home_lat=home_lat,
+                                ceiling_m=ceiling_m,
+                                area_id=area_id,
+                                profile=profile,
                             )
                             decision = SupervisorDecision.RTB_NOW.value
                             reason = f"replan plan invalid; falling back to RTB: {e}"
@@ -284,8 +289,11 @@ async def live_mission_session(
                             current_lat=f_dict["lat"],
                             current_lon=f_dict["lon"],
                             current_alt=f_dict["alt_m"],
-                            home_lon=home_lon, home_lat=home_lat,
-                            ceiling_m=ceiling_m, area_id=area_id, profile=profile,
+                            home_lon=home_lon,
+                            home_lat=home_lat,
+                            ceiling_m=ceiling_m,
+                            area_id=area_id,
+                            profile=profile,
                         )
                         decision = SupervisorDecision.RTB_NOW.value
                 elif decision in (
@@ -296,15 +304,19 @@ async def live_mission_session(
                         current_lat=f_dict["lat"],
                         current_lon=f_dict["lon"],
                         current_alt=f_dict["alt_m"],
-                        home_lon=home_lon, home_lat=home_lat,
-                        ceiling_m=ceiling_m, area_id=area_id, profile=profile,
+                        home_lon=home_lon,
+                        home_lat=home_lat,
+                        ceiling_m=ceiling_m,
+                        area_id=area_id,
+                        profile=profile,
                     )
                 elif decision == SupervisorDecision.EMERGENCY_LAND.value:
                     new_plan = _build_emergency_land_plan(
                         current_lat=f_dict["lat"],
                         current_lon=f_dict["lon"],
                         current_alt=f_dict["alt_m"],
-                        area_id=area_id, profile=profile,
+                        area_id=area_id,
+                        profile=profile,
                     )
                 else:
                     log.warning("unknown supervisor decision: %s", decision)

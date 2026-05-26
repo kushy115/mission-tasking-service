@@ -11,12 +11,12 @@ without server-side typing gymnastics.
 from __future__ import annotations
 
 import asyncio
-import enum
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 
-class EventType(str, enum.Enum):
+class EventType(StrEnum):
     """The events a live mission can experience.
 
     Keep this list small — every type needs a deterministic policy branch in
@@ -24,13 +24,13 @@ class EventType(str, enum.Enum):
     are experimental.
     """
 
-    WIND_SPIKE = "WIND_SPIKE"           # sustained wind step-up in m/s
-    NFZ_POPUP = "NFZ_POPUP"             # new no-fly polygon appears mid-flight
-    BATTERY_FAULT = "BATTERY_FAULT"     # drain rate increases unexpectedly
-    SENSOR_FAULT = "SENSOR_FAULT"       # named sensor goes offline (EO/IR)
-    GPS_DROPOUT = "GPS_DROPOUT"         # advisory; nav degraded
-    MANUAL_RTB = "MANUAL_RTB"           # operator-triggered return-to-base
-    MANUAL_LAND = "MANUAL_LAND"         # operator-triggered emergency land
+    WIND_SPIKE = "WIND_SPIKE"  # sustained wind step-up in m/s
+    NFZ_POPUP = "NFZ_POPUP"  # new no-fly polygon appears mid-flight
+    BATTERY_FAULT = "BATTERY_FAULT"  # drain rate increases unexpectedly
+    SENSOR_FAULT = "SENSOR_FAULT"  # named sensor goes offline (EO/IR)
+    GPS_DROPOUT = "GPS_DROPOUT"  # advisory; nav degraded
+    MANUAL_RTB = "MANUAL_RTB"  # operator-triggered return-to-base
+    MANUAL_LAND = "MANUAL_LAND"  # operator-triggered emergency land
 
 
 @dataclass
@@ -46,7 +46,7 @@ class Event:
     note: str = ""  # operator-supplied free text shown in the UI banner
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Event":
+    def from_dict(cls, d: dict[str, Any]) -> Event:
         type_str = d.get("type") or ""
         try:
             etype = EventType(type_str)

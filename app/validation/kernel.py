@@ -75,18 +75,14 @@ def _avoids_nfz(nfzs: tuple[Polygon, ...], plan: MissionPlan) -> tuple[bool, lis
     return (not bad, bad)
 
 
-def _altitude_ok(
-    ceiling_m: float, min_agl_m: float, plan: MissionPlan
-) -> tuple[bool, list[str]]:
+def _altitude_ok(ceiling_m: float, min_agl_m: float, plan: MissionPlan) -> tuple[bool, list[str]]:
     bad: list[str] = []
     for li, leg in enumerate(plan.legs):
         for wi, wp in enumerate(leg.geometry):
             if wp.alt_m > ceiling_m:
                 bad.append(f"leg[{li}].waypoint[{wi}] alt {wp.alt_m}m exceeds ceiling {ceiling_m}m")
             if wp.alt_m < min_agl_m:
-                bad.append(
-                    f"leg[{li}].waypoint[{wi}] alt {wp.alt_m}m below min AGL {min_agl_m}m"
-                )
+                bad.append(f"leg[{li}].waypoint[{wi}] alt {wp.alt_m}m below min AGL {min_agl_m}m")
     return (not bad, bad)
 
 
@@ -238,8 +234,12 @@ def validate_plan(
     wind_mps = weather.wind_mps if weather is not None else 0.0
     wind_coeff = settings.weather_wind_power_coeff if weather is not None else 0.0
     batt_ok, batt_detail, batt_used, batt_reserve = _battery_ok(
-        plan, profile, settings.battery_reserve_min_pct, starting_battery_pct,
-        wind_mps=wind_mps, wind_coeff=wind_coeff,
+        plan,
+        profile,
+        settings.battery_reserve_min_pct,
+        starting_battery_pct,
+        wind_mps=wind_mps,
+        wind_coeff=wind_coeff,
     )
     if not batt_ok:
         violations.append(batt_detail)

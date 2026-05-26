@@ -44,9 +44,7 @@ def build_supervisor() -> Any:
 
     g.add_edge(START, "assess")
     g.add_edge("assess", "decide")
-    g.add_conditional_edges(
-        "decide", _after_decide, {"replan": "replan", "commit": "commit"}
-    )
+    g.add_conditional_edges("decide", _after_decide, {"replan": "replan", "commit": "commit"})
     g.add_edge("replan", "commit")
     g.add_edge("commit", END)
 

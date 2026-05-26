@@ -1,13 +1,13 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class MissionStatus(str, Enum):
+class MissionStatus(StrEnum):
     READY_FOR_APPROVAL = "READY_FOR_APPROVAL"
     NEEDS_CLARIFICATION = "NEEDS_CLARIFICATION"
     REJECTED = "REJECTED"
 
 
-class LegType(str, Enum):
+class LegType(StrEnum):
     TRANSIT = "TRANSIT"
     SEARCH_PATTERN = "SEARCH_PATTERN"
     LOITER = "LOITER"
@@ -15,13 +15,13 @@ class LegType(str, Enum):
     RETURN_TO_BASE = "RETURN_TO_BASE"
 
 
-class SensorMode(str, Enum):
+class SensorMode(StrEnum):
     EO = "EO"
     IR = "IR"
     OFF = "OFF"
 
 
-class PatternName(str, Enum):
+class PatternName(StrEnum):
     LAWNMOWER = "lawnmower"
     EXPANDING_SQUARE = "expanding_square"
     SECTOR = "sector"

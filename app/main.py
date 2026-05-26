@@ -8,10 +8,10 @@ Wires up:
 
 from __future__ import annotations
 
+import contextlib
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
-
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -142,10 +142,8 @@ def create_app() -> FastAPI:
         except WebSocketDisconnect:
             log.info("ws sim stream client disconnected")
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 await websocket.close()
-            except Exception:  # noqa: BLE001
-                pass
 
     # Single-page UI for compiling missions in a browser.
     # Lives in app/static/index.html; the file gets copied into the Docker

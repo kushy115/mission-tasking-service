@@ -13,13 +13,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
-from typing import AsyncIterator
 
 from shapely.geometry import Point
 
 from app.schemas.enums import LegType
-from app.schemas.plan import MissionLeg, MissionPlan, Waypoint
+from app.schemas.plan import MissionPlan, Waypoint
 from app.validation.kernel import GeoContext
 from app.validation.physics import (
     DroneProfile,
@@ -34,7 +34,7 @@ SIM_DT_S = 0.2  # simulation tick — small enough for smooth animation
 
 @dataclass
 class TelemetryFrame:
-    t: float            # simulated elapsed seconds since takeoff
+    t: float  # simulated elapsed seconds since takeoff
     lat: float
     lon: float
     alt_m: float
@@ -42,8 +42,8 @@ class TelemetryFrame:
     leg_idx: int
     leg_type: str
     sensor_mode: str | None
-    status: str         # "flying" | "done" | "aborted"
-    detail: str = ""    # human reason on abort
+    status: str  # "flying" | "done" | "aborted"
+    detail: str = ""  # human reason on abort
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -80,8 +80,16 @@ async def telemetry_stream(
     """
     if not plan.legs:
         yield TelemetryFrame(
-            t=0.0, lat=0.0, lon=0.0, alt_m=0.0, battery_pct=starting_battery_pct,
-            leg_idx=0, leg_type="NONE", sensor_mode=None, status="done", detail="empty plan",
+            t=0.0,
+            lat=0.0,
+            lon=0.0,
+            alt_m=0.0,
+            battery_pct=starting_battery_pct,
+            leg_idx=0,
+            leg_type="NONE",
+            sensor_mode=None,
+            status="done",
+            detail="empty plan",
         )
         return
 
@@ -106,8 +114,12 @@ async def telemetry_stream(
                 elapsed += SIM_DT_S
                 battery_remaining = max(0.0, battery_remaining - batt_per_tick)
                 yield TelemetryFrame(
-                    t=elapsed, lat=wp.lat, lon=wp.lon, alt_m=wp.alt_m,
-                    battery_pct=battery_remaining, leg_idx=li,
+                    t=elapsed,
+                    lat=wp.lat,
+                    lon=wp.lon,
+                    alt_m=wp.alt_m,
+                    battery_pct=battery_remaining,
+                    leg_idx=li,
                     leg_type=leg.leg_type.value,
                     sensor_mode=leg.sensor_mode.value if leg.sensor_mode else None,
                     status="flying",
@@ -123,7 +135,7 @@ async def telemetry_stream(
         ]
         total_dist = sum(seg_dists) or 1.0
 
-        for si, (a, b) in enumerate(zip(leg.geometry[:-1], leg.geometry[1:])):
+        for si, (a, b) in enumerate(zip(leg.geometry[:-1], leg.geometry[1:], strict=True)):
             seg_d = seg_dists[si] or 1.0
             seg_share = seg_d / total_dist
             seg_duration_s = energy.duration_s * seg_share
@@ -139,17 +151,26 @@ async def telemetry_stream(
                 # Geofence breach check — terminate the stream.
                 if boundary is not None and not boundary.covers(Point(lon, lat)):
                     yield TelemetryFrame(
-                        t=elapsed, lat=lat, lon=lon, alt_m=alt,
-                        battery_pct=battery_remaining, leg_idx=li,
+                        t=elapsed,
+                        lat=lat,
+                        lon=lon,
+                        alt_m=alt,
+                        battery_pct=battery_remaining,
+                        leg_idx=li,
                         leg_type=leg.leg_type.value,
                         sensor_mode=leg.sensor_mode.value if leg.sensor_mode else None,
-                        status="aborted", detail="exited geofence",
+                        status="aborted",
+                        detail="exited geofence",
                     )
                     return
 
                 yield TelemetryFrame(
-                    t=elapsed, lat=lat, lon=lon, alt_m=alt,
-                    battery_pct=battery_remaining, leg_idx=li,
+                    t=elapsed,
+                    lat=lat,
+                    lon=lon,
+                    alt_m=alt,
+                    battery_pct=battery_remaining,
+                    leg_idx=li,
                     leg_type=leg.leg_type.value,
                     sensor_mode=leg.sensor_mode.value if leg.sensor_mode else None,
                     status="flying",
@@ -159,8 +180,12 @@ async def telemetry_stream(
     last_leg = plan.legs[-1]
     last_wp = last_leg.geometry[-1]
     yield TelemetryFrame(
-        t=elapsed, lat=last_wp.lat, lon=last_wp.lon, alt_m=last_wp.alt_m,
-        battery_pct=battery_remaining, leg_idx=len(plan.legs) - 1,
+        t=elapsed,
+        lat=last_wp.lat,
+        lon=last_wp.lon,
+        alt_m=last_wp.alt_m,
+        battery_pct=battery_remaining,
+        leg_idx=len(plan.legs) - 1,
         leg_type=last_leg.leg_type.value,
         sensor_mode=last_leg.sensor_mode.value if last_leg.sensor_mode else None,
         status="done",

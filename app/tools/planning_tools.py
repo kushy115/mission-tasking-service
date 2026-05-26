@@ -21,7 +21,7 @@ from app.config import get_settings
 from app.geo import patterns as patterns_mod
 from app.geo.store import get_engine, load_drone_profile, load_geo_context
 from app.schemas.enums import SensorMode
-from app.schemas.plan import MissionLeg, Waypoint
+from app.schemas.plan import MissionLeg
 from app.validation.physics import (
     estimate_mission,
     sensor_ground_resolution_m_per_px,

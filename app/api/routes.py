@@ -11,12 +11,12 @@ from fastapi.responses import Response
 from sqlalchemy import text
 
 from app.api.models import (
+    ApprovalRequest,
+    ApprovalResponse,
     AreaResearchRequest,
     AreaResearchResponse,
     AreaUpsertRequest,
     AreaUpsertResponse,
-    ApprovalRequest,
-    ApprovalResponse,
     CompileRequest,
     CompileResponse,
     DroneUpsertRequest,
@@ -129,6 +129,7 @@ def upsert_area_endpoint(req: AreaUpsertRequest) -> AreaUpsertResponse:
     # one so we never exceed AREA_LFU_CAP. Protected (seeded) areas are immune.
     # See DESIGN_DECISIONS §8.
     from app.geo.store import evict_lfu_area_if_needed
+
     evicted = evict_lfu_area_if_needed(get_engine(), exclude_area_id=req.area_id)
     if evicted:
         log.info("LFU evicted area %r to make room for %r", evicted, req.area_id)
@@ -161,6 +162,7 @@ def list_drones_endpoint() -> list[dict]:
 def upsert_drone_endpoint(req: DroneUpsertRequest) -> dict[str, Any]:
     """Operator-authored drone profile (DD-006). Upserts into the drones table."""
     from app.geo.store import upsert_drone
+
     profile = req.model_dump(exclude={"profile_id"})
     upsert_drone(get_engine(), req.profile_id, profile)
     return {"profile_id": req.profile_id, "saved": True}
@@ -175,9 +177,11 @@ def research_area_endpoint(req: AreaResearchRequest) -> AreaResearchResponse:
     every field before saving the area. The deterministic kernel then becomes
     the source of truth at compile time, as usual.
     """
-    from app.graph.nodes import _llm_lazy
     import json as _json
+
     from langchain_core.messages import HumanMessage, SystemMessage
+
+    from app.graph.nodes import _llm_lazy
 
     try:
         coords = req.boundary.get("coordinates", [[]])[0]
@@ -222,7 +226,9 @@ def research_area_endpoint(req: AreaResearchRequest) -> AreaResearchResponse:
         log.warning("research JSON parse failed: %s; raw=%r", e, raw[:300])
         # Degrade gracefully — return a safe-ish default so the UI doesn't dead-end.
         data = {
-            "flight_permitted": True, "ceiling_m": 120.0, "suggested_nfzs": [],
+            "flight_permitted": True,
+            "ceiling_m": 120.0,
+            "suggested_nfzs": [],
             "notes": "LLM response could not be parsed; using defaults.",
         }
     return AreaResearchResponse(
@@ -305,7 +311,9 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
     graph = request.app.state.compile_graph
     log.info(
         "compile request area=%s drones=%s command=%r",
-        req.area_id, req.drone_ids or [req.drone_state.drone_profile_id], req.command[:120],
+        req.area_id,
+        req.drone_ids or [req.drone_state.drone_profile_id],
+        req.command[:120],
     )
 
     # --- multi-drone path ---
@@ -351,7 +359,9 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
         return CompileResponse(
             plan=primary,
             repair_loops=total_repairs,
-            awaiting_approval=all(p.status == MissionStatus.READY_FOR_APPROVAL for p in group_plans),
+            awaiting_approval=all(
+                p.status == MissionStatus.READY_FOR_APPROVAL for p in group_plans
+            ),
             group_plans=group_plans,
         )
 
@@ -370,6 +380,7 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
         # LFU bookkeeping: count this access on the area (DD-008).
         try:
             from app.geo.store import touch_area_access
+
             touch_area_access(get_engine(), req.area_id)
         except Exception:  # noqa: BLE001
             pass
@@ -464,6 +475,7 @@ def chat_about_mission(mission_id: str, req: MissionChatRequest) -> MissionChatR
     top of an already-produced plan.
     """
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
     from app.graph.nodes import _llm_lazy
 
     raw = load_mission(get_engine(), mission_id)
@@ -492,9 +504,7 @@ def chat_about_mission(mission_id: str, req: MissionChatRequest) -> MissionChatR
     if plan.advisory:
         advisor_lines.append(f"Advisor summary: {plan.advisory.summary}")
         for s in plan.advisory.suggestions:
-            advisor_lines.append(
-                f"  - [{s.impact} · {s.category}] {s.title} — {s.rationale}"
-            )
+            advisor_lines.append(f"  - [{s.impact} · {s.category}] {s.title} — {s.rationale}")
         if plan.advisory.resource_constrained_fallback:
             advisor_lines.append(
                 f"  Fallback if resource-constrained: {plan.advisory.resource_constrained_fallback}"
@@ -517,13 +527,13 @@ PLAN UNDER DISCUSSION:
   mission_id: {plan.mission_id}
   area: {plan.area_id}
   status: {plan.status.value}
-  total duration: {plan.total_duration_s:.0f}s ({plan.total_duration_s/60:.1f} min)
+  total duration: {plan.total_duration_s:.0f}s ({plan.total_duration_s / 60:.1f} min)
   battery use: {plan.total_battery_pct:.1f}%  reserve at landing: {plan.battery_reserve_pct:.1f}%
   reasoning: {plan.reasoning_trace}
   legs:
-{chr(10).join(leg_lines) if leg_lines else '  (no legs)'}
+{chr(10).join(leg_lines) if leg_lines else "  (no legs)"}
 
-{chr(10).join(advisor_lines) if advisor_lines else '(no advisor output)'}
+{chr(10).join(advisor_lines) if advisor_lines else "(no advisor output)"}
 """
 
     messages: list = [SystemMessage(content=system_prompt)]
@@ -587,7 +597,7 @@ def inject_supervisor_event(
         raise HTTPException(
             status_code=404,
             detail=f"no active live session for mission_id={mission_id!r}, "
-                   f"session_id={req.session_id!r}",
+            f"session_id={req.session_id!r}",
         )
     try:
         event = Event.from_dict({"type": req.type, "payload": req.payload, "note": req.note})
@@ -597,8 +607,11 @@ def inject_supervisor_event(
         q.put_nowait(event)
     except Exception as e:  # noqa: BLE001 — queue full
         raise HTTPException(
-            status_code=503, detail=f"event queue full: {e}",
+            status_code=503,
+            detail=f"event queue full: {e}",
         ) from e
     return SupervisorInjectResponse(
-        accepted=True, queue_size=q.qsize(), detail=f"queued {event.type.value}",
+        accepted=True,
+        queue_size=q.qsize(),
+        detail=f"queued {event.type.value}",
     )

@@ -118,11 +118,16 @@ AREA_LFU_CAP = 10
 def evict_lfu_area_if_needed(engine: Engine, exclude_area_id: str | None = None) -> str | None:
     """If unprotected-area count >= cap, evict the LFU one. Returns evicted id."""
     with engine.begin() as conn:
-        n = conn.execute(
-            text("SELECT COUNT(*) FROM areas WHERE protected = FALSE"
-                 + (" AND area_id <> :ex" if exclude_area_id else "")),
-            {"ex": exclude_area_id} if exclude_area_id else {},
-        ).scalar() or 0
+        n = (
+            conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM areas WHERE protected = FALSE"
+                    + (" AND area_id <> :ex" if exclude_area_id else "")
+                ),
+                {"ex": exclude_area_id} if exclude_area_id else {},
+            ).scalar()
+            or 0
+        )
         if n < AREA_LFU_CAP:
             return None
         # Eviction key: lowest access_count, oldest last_accessed_at as tiebreak.
@@ -156,8 +161,9 @@ def touch_area_access(engine: Engine, area_id: str) -> None:
 def set_area_notes(engine: Engine, area_id: str, notes: str) -> None:
     """Store the advisory note returned by the LLM-research step (DD-007)."""
     with engine.begin() as conn:
-        conn.execute(text("UPDATE areas SET notes = :n WHERE area_id = :a"),
-                     {"n": notes, "a": area_id})
+        conn.execute(
+            text("UPDATE areas SET notes = :n WHERE area_id = :a"), {"n": notes, "a": area_id}
+        )
 
 
 def upsert_area(engine: Engine, area_id: str, geojson: dict, ceiling_m: float) -> None:
@@ -199,14 +205,14 @@ def upsert_area(engine: Engine, area_id: str, geojson: dict, ceiling_m: float) -
         for f in nfz_feats:
             poly: Polygon = shape(f["geometry"])  # type: ignore[assignment]
             conn.execute(
-                text(
-                    "INSERT INTO nfzs(area_id, geom) VALUES (:aid, ST_GeomFromText(:wkt, 4326))"
-                ),
+                text("INSERT INTO nfzs(area_id, geom) VALUES (:aid, ST_GeomFromText(:wkt, 4326))"),
                 {"aid": area_id, "wkt": poly.wkt},
             )
 
 
-def snap_home_to_boundary(boundary: Polygon, home_lon: float, home_lat: float) -> tuple[float, float]:
+def snap_home_to_boundary(
+    boundary: Polygon, home_lon: float, home_lat: float
+) -> tuple[float, float]:
     """Project the user-picked home point onto the nearest point on the polygon
     exterior. Matches kernel's "home_point is on the boundary" semantics.
     See docs/DESIGN_DECISIONS.md §5.
@@ -404,9 +410,7 @@ def set_mission_approval(
 ) -> None:
     with engine.begin() as conn:
         conn.execute(
-            text(
-                "UPDATE missions SET approved = :ap, operator_note = :note WHERE mission_id = :m"
-            ),
+            text("UPDATE missions SET approved = :ap, operator_note = :note WHERE mission_id = :m"),
             {"ap": approved, "note": operator_note, "m": mission_id},
         )
 
@@ -460,6 +464,10 @@ def list_drones(engine: Engine) -> list[dict]:
     """All drone profiles. Used by the UI dropdown."""
     with engine.connect() as conn:
         rows = conn.execute(
-            text("SELECT profile_id, profile, protected FROM drones ORDER BY protected DESC, profile_id")
+            text(
+                "SELECT profile_id, profile, protected FROM drones ORDER BY protected DESC, profile_id"
+            )
         ).all()
-    return [{"profile_id": pid, "protected": bool(p), **(profile or {})} for pid, profile, p in rows]
+    return [
+        {"profile_id": pid, "protected": bool(p), **(profile or {})} for pid, profile, p in rows
+    ]

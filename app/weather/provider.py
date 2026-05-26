@@ -28,19 +28,19 @@ class WeatherObservation:
     would interpolate to flight altitude.
     """
 
-    wind_mps: float           # sustained horizontal wind speed, ground level
-    gust_mps: float           # peak gust over the past hour
-    wind_dir_deg: float       # meteorological "from" direction, 0=N, 90=E
-    visibility_m: float       # horizontal visibility in meters
+    wind_mps: float  # sustained horizontal wind speed, ground level
+    gust_mps: float  # peak gust over the past hour
+    wind_dir_deg: float  # meteorological "from" direction, 0=N, 90=E
+    visibility_m: float  # horizontal visibility in meters
     precipitation_mmh: float  # liquid precipitation rate, mm/hour
-    temperature_c: float      # surface temperature in degrees Celsius
-    source: str               # "synthetic" or "open-meteo"
+    temperature_c: float  # surface temperature in degrees Celsius
+    source: str  # "synthetic" or "open-meteo"
 
     def summary_for_prompt(self) -> str:
         """One-line description an LLM can include in a plan's reasoning."""
         return (
             f"wind {self.wind_mps:.1f} m/s gusting {self.gust_mps:.1f} m/s "
-            f"from {self.wind_dir_deg:.0f}°, visibility {self.visibility_m/1000:.1f} km, "
+            f"from {self.wind_dir_deg:.0f}°, visibility {self.visibility_m / 1000:.1f} km, "
             f"precipitation {self.precipitation_mmh:.1f} mm/h, "
             f"{self.temperature_c:.0f}°C (source: {self.source})"
         )
@@ -97,14 +97,16 @@ class OpenMeteoWeather:
         params = {
             "latitude": f"{lat:.4f}",
             "longitude": f"{lon:.4f}",
-            "current": ",".join([
-                "temperature_2m",
-                "precipitation",
-                "wind_speed_10m",
-                "wind_direction_10m",
-                "wind_gusts_10m",
-                "visibility",
-            ]),
+            "current": ",".join(
+                [
+                    "temperature_2m",
+                    "precipitation",
+                    "wind_speed_10m",
+                    "wind_direction_10m",
+                    "wind_gusts_10m",
+                    "visibility",
+                ]
+            ),
             "wind_speed_unit": "ms",
             "timezone": "UTC",
         }

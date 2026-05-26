@@ -9,17 +9,18 @@ deterministic. The repair loop is bounded by settings.repair_loop_cap (default
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 import uuid
 from typing import Any
-
-import json
-import time
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.config import get_settings
+from app.geo.store import get_engine, load_drone_profile, load_geo_context, save_mission
+from app.graph.state import CompileState
 from app.observability.metrics import (
     LLM_CALLS_TOTAL,
     LLM_DURATION,
@@ -28,11 +29,8 @@ from app.observability.metrics import (
     PLAN_LEGS,
     VALIDATION_VIOLATIONS,
 )
-from app.geo.store import get_engine, load_drone_profile, load_geo_context, save_mission
-from app.graph.state import CompileState
 from app.schemas.enums import MissionStatus
 from app.schemas.plan import MissionPlan, OptimizationAdvisory
-from app.tools.planning_tools import PLANNING_TOOLS
 from app.validation.deconfliction import deconfliction_check
 from app.validation.kernel import validate_plan
 from app.weather import get_weather_for_area
@@ -308,7 +306,7 @@ def plan_node(state: CompileState) -> dict[str, Any]:
     md = state.get("multi_drone_slot")
     if md:
         user_msg_parts.append(
-            f"\nMULTI-DRONE GROUP — you are planning drone {md['index']+1} of "
+            f"\nMULTI-DRONE GROUP — you are planning drone {md['index'] + 1} of "
             f"{md['total']}. Your assigned altitude band is "
             f"{md['alt_min']:.0f}–{md['alt_max']:.0f}m. Siblings are on bands: "
             f"{md['sibling_bands']}. Stagger your first leg's est_duration_s by "
@@ -326,8 +324,7 @@ def plan_node(state: CompileState) -> dict[str, Any]:
     if repair_attempts > 0 and errors:
         user_msg_parts.append(
             "\nREPAIR PASS — the deterministic safety kernel rejected your previous "
-            "plan with these violations. Fix every one of them:\n  - "
-            + "\n  - ".join(errors)
+            "plan with these violations. Fix every one of them:\n  - " + "\n  - ".join(errors)
         )
     user_msg = "\n".join(user_msg_parts)
 
@@ -413,9 +410,10 @@ def plan_node(state: CompileState) -> dict[str, Any]:
     # to the area boundary at the appropriate spacing.
     try:
         from shapely.geometry import Polygon as _SPoly
+
         from app.geo.patterns import lawnmower_fit_to_boundary
-        from app.schemas.enums import LegType as _LT, SensorMode as _SM
-        from app.validation.physics import sensor_swath_m, estimate_leg
+        from app.schemas.enums import LegType
+        from app.validation.physics import estimate_leg, sensor_swath_m
 
         boundary_coords = geo["boundary_lonlat"]
         boundary_poly = _SPoly(boundary_coords)
@@ -430,7 +428,7 @@ def plan_node(state: CompileState) -> dict[str, Any]:
             return profile.sensors[0] if profile.sensors else None
 
         for leg_idx, leg in enumerate(structured.legs):
-            if leg.leg_type != _LT.SEARCH_PATTERN:
+            if leg.leg_type != LegType.SEARCH_PATTERN:
                 continue
             sensor = _pick_sensor(leg.sensor_mode.value if leg.sensor_mode else None)
             if sensor is None:
@@ -448,13 +446,16 @@ def plan_node(state: CompileState) -> dict[str, Any]:
             leg.est_battery_pct = energy.battery_pct
             log.info(
                 "densified SEARCH_PATTERN leg[%d]: %d waypoints @ %.1fm spacing (swath=%.1fm)",
-                leg_idx, len(new_pts), swath * 0.85, swath,
+                leg_idx,
+                len(new_pts),
+                swath * 0.85,
+                swath,
             )
 
         # Re-aggregate total_duration / total_battery if we changed anything.
-        if any(l.leg_type == _LT.SEARCH_PATTERN for l in structured.legs):
-            structured.total_duration_s = sum(l.est_duration_s for l in structured.legs)
-            structured.total_battery_pct = sum(l.est_battery_pct for l in structured.legs)
+        if any(leg.leg_type == LegType.SEARCH_PATTERN for leg in structured.legs):
+            structured.total_duration_s = sum(leg.est_duration_s for leg in structured.legs)
+            structured.total_battery_pct = sum(leg.est_battery_pct for leg in structured.legs)
             starting_pct = float(state.get("drone_state", {}).get("battery_pct", 100.0))
             structured.battery_reserve_pct = starting_pct - structured.total_battery_pct
     except Exception as e:  # noqa: BLE001 — densification is best-effort
@@ -475,7 +476,9 @@ def validate_node(state: CompileState) -> dict[str, Any]:
     log.info("→ validate")
     raw = state.get("draft_plan")
     if raw is None:
-        return {"validation_errors": state.get("validation_errors") or ["no draft_plan to validate"]}
+        return {
+            "validation_errors": state.get("validation_errors") or ["no draft_plan to validate"]
+        }
 
     plan = MissionPlan.model_validate(raw)
 
@@ -500,10 +503,14 @@ def validate_node(state: CompileState) -> dict[str, Any]:
     wx = state.get("weather")
     if wx:
         from app.weather import WeatherObservation
+
         weather_obs = WeatherObservation(
-            wind_mps=wx["wind_mps"], gust_mps=wx["gust_mps"],
-            wind_dir_deg=wx["wind_dir_deg"], visibility_m=wx["visibility_m"],
-            precipitation_mmh=wx["precipitation_mmh"], temperature_c=wx["temperature_c"],
+            wind_mps=wx["wind_mps"],
+            gust_mps=wx["gust_mps"],
+            wind_dir_deg=wx["wind_dir_deg"],
+            visibility_m=wx["visibility_m"],
+            precipitation_mmh=wx["precipitation_mmh"],
+            temperature_c=wx["temperature_c"],
             source=wx.get("source", "cached"),
         )
 
@@ -520,7 +527,11 @@ def validate_node(state: CompileState) -> dict[str, Any]:
             deconfliction = (True, [])
 
     violations, report = validate_plan(
-        plan, geo, profile, starting_battery_pct=starting_pct, weather=weather_obs,
+        plan,
+        geo,
+        profile,
+        starting_battery_pct=starting_pct,
+        weather=weather_obs,
         deconfliction=deconfliction,
     )
 
@@ -531,15 +542,19 @@ def validate_node(state: CompileState) -> dict[str, Any]:
     accepted_alts: list[dict] = []
     for i, raw in enumerate(raw_alts):
         try:
-            raw.setdefault("mission_id", f"{plan.mission_id}-alt{i+1}")
+            raw.setdefault("mission_id", f"{plan.mission_id}-alt{i + 1}")
             raw["area_id"] = state["area_id"]
             alt_plan = MissionPlan.model_validate(raw)
         except Exception as e:  # noqa: BLE001
             log.info("dropping alternative %d: schema failure (%s)", i, e)
             continue
         alt_vios, _alt_report = validate_plan(
-            alt_plan, geo, profile, starting_battery_pct=starting_pct,
-            weather=weather_obs, deconfliction=deconfliction,
+            alt_plan,
+            geo,
+            profile,
+            starting_battery_pct=starting_pct,
+            weather=weather_obs,
+            deconfliction=deconfliction,
         )
         if alt_vios:
             log.info("dropping alternative %d: %d violations", i, len(alt_vios))
@@ -548,11 +563,13 @@ def validate_node(state: CompileState) -> dict[str, Any]:
 
     # Capture this attempt for the mission-history diff view.
     drafts = list(state.get("repair_drafts") or [])
-    drafts.append({
-        "attempt": state.get("repair_attempts", 0),
-        "draft_plan": plan.model_dump(),
-        "violations": list(violations),
-    })
+    drafts.append(
+        {
+            "attempt": state.get("repair_attempts", 0),
+            "draft_plan": plan.model_dump(),
+            "violations": list(violations),
+        }
+    )
 
     # Record each FAILED check so the dashboard can show which safety checks
     # trip most often (e.g. coverage-gap dominates → planner's pattern logic
@@ -638,15 +655,20 @@ def critique_node(state: CompileState) -> dict[str, Any]:
     start = time.perf_counter()
     provider, model = settings.llm_provider, settings.llm_model
     try:
-        ai_msg = llm.invoke([
-            {"role": "system", "content": _CRITIQUE_SYSTEM_PROMPT},
-            {"role": "user", "content": user_msg},
-        ])
+        ai_msg = llm.invoke(
+            [
+                {"role": "system", "content": _CRITIQUE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ]
+        )
     except Exception as e:  # noqa: BLE001
         log.warning("critique LLM call failed: %s — continuing without it", e)
         LLM_CALLS_TOTAL.labels(provider, model, "error").inc()
         LLM_DURATION.labels(provider, model).observe(time.perf_counter() - start)
-        return {"confidence_score": None, "critique_notes": f"critique unavailable: {type(e).__name__}"}
+        return {
+            "confidence_score": None,
+            "critique_notes": f"critique unavailable: {type(e).__name__}",
+        }
     LLM_CALLS_TOTAL.labels(provider, model, "ok").inc()
     LLM_DURATION.labels(provider, model).observe(time.perf_counter() - start)
 
@@ -738,6 +760,7 @@ def advisor_node(state: CompileState) -> dict[str, Any]:
     # or different airframes when appropriate.
     try:
         from app.geo.store import list_drones
+
         fleet = [
             {
                 "profile_id": d.get("profile_id"),
@@ -768,14 +791,14 @@ def advisor_node(state: CompileState) -> dict[str, Any]:
     plan_summary = {
         "legs": [
             {
-                "leg_type": l.get("leg_type"),
-                "pattern": l.get("pattern_name"),
-                "sensor": l.get("sensor_mode"),
-                "alt_m": (l.get("geometry") or [{}])[0].get("alt_m"),
-                "duration_s": l.get("est_duration_s"),
-                "battery_pct": l.get("est_battery_pct"),
+                "leg_type": leg.get("leg_type"),
+                "pattern": leg.get("pattern_name"),
+                "sensor": leg.get("sensor_mode"),
+                "alt_m": (leg.get("geometry") or [{}])[0].get("alt_m"),
+                "duration_s": leg.get("est_duration_s"),
+                "battery_pct": leg.get("est_battery_pct"),
             }
-            for l in (raw.get("legs") or [])
+            for leg in (raw.get("legs") or [])
         ],
         "total_duration_s": raw.get("total_duration_s"),
         "total_battery_pct": raw.get("total_battery_pct"),
@@ -803,10 +826,12 @@ def advisor_node(state: CompileState) -> dict[str, Any]:
         # Native LangChain structured-output: the chat model returns a populated
         # pydantic object. No JSON-string parsing, no fence-stripping.
         structured_llm = llm.with_structured_output(OptimizationAdvisory)
-        advisory: OptimizationAdvisory = structured_llm.invoke([
-            SystemMessage(content=_ADVISOR_SYSTEM_PROMPT),
-            HumanMessage(content=user_msg),
-        ])
+        advisory: OptimizationAdvisory = structured_llm.invoke(
+            [
+                SystemMessage(content=_ADVISOR_SYSTEM_PROMPT),
+                HumanMessage(content=user_msg),
+            ]
+        )
     except Exception as e:  # noqa: BLE001
         log.warning("advisor LLM call failed: %s — continuing without it", e)
         LLM_CALLS_TOTAL.labels(provider, model, "error").inc()
@@ -815,6 +840,12 @@ def advisor_node(state: CompileState) -> dict[str, Any]:
     LLM_CALLS_TOTAL.labels(provider, model, "ok").inc()
     LLM_DURATION.labels(provider, model).observe(time.perf_counter() - start)
 
+    # Defensive: providers occasionally return a dict instead of the pydantic
+    # object (or a test mock returns a MagicMock). Anything that isn't a real
+    # OptimizationAdvisory gets dropped — advisory is advisory only.
+    if not isinstance(advisory, OptimizationAdvisory):
+        log.warning("advisor returned %s, not OptimizationAdvisory — skipping", type(advisory))
+        return {}
     return {"advisory": advisory.model_dump()}
 
 
@@ -846,10 +877,9 @@ def clarify_node(state: CompileState) -> dict[str, Any]:
 def reject_node(state: CompileState) -> dict[str, Any]:
     reasons = state.get("rejection_reasons") or []
     if not reasons:
-        reasons = (
-            state.get("validation_errors")
-            or ["planner could not produce a safe plan within the repair budget"]
-        )
+        reasons = state.get("validation_errors") or [
+            "planner could not produce a safe plan within the repair budget"
+        ]
     return {
         "status": MissionStatus.REJECTED.value,
         "rejection_reasons": reasons,
@@ -900,6 +930,7 @@ def finalize_node(state: CompileState) -> dict[str, Any]:  # noqa: D401
         plan.critique_notes = state["critique_notes"]
     if state.get("advisory"):
         from app.schemas.plan import OptimizationAdvisory
+
         try:
             plan.advisory = OptimizationAdvisory.model_validate(state["advisory"])
         except Exception as e:  # noqa: BLE001

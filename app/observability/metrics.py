@@ -31,9 +31,7 @@ REPAIR_LOOPS = Histogram(
     buckets=(0, 1, 2, 3, 4, 5),
 )
 REJECTIONS_TOTAL = Counter("mts_rejections_total", "Plans returned as REJECTED.")
-CLARIFICATIONS_TOTAL = Counter(
-    "mts_clarifications_total", "Plans returned as NEEDS_CLARIFICATION."
-)
+CLARIFICATIONS_TOTAL = Counter("mts_clarifications_total", "Plans returned as NEEDS_CLARIFICATION.")
 
 # ---- LLM-level (cost + reliability of the language model itself) ------------
 

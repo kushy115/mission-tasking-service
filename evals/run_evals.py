@@ -51,18 +51,15 @@ def _score(example: dict, response: dict) -> dict:
     status = plan["status"]
     status_ok = status == example["expected_status"]
     cs = plan.get("constraints_satisfied") or {}
-    validator_ok = (
-        status != "READY_FOR_APPROVAL"
-        or all(
-            cs.get(k, False)
-            for k in (
-                "inside_geofence",
-                "avoids_nfz",
-                "battery_within_budget",
-                "within_endurance",
-                "sensor_coverage_adequate",
-                "ends_with_rtb",
-            )
+    validator_ok = status != "READY_FOR_APPROVAL" or all(
+        cs.get(k, False)
+        for k in (
+            "inside_geofence",
+            "avoids_nfz",
+            "battery_within_budget",
+            "within_endurance",
+            "sensor_coverage_adequate",
+            "ends_with_rtb",
         )
     )
     loops = response.get("repair_loops", 0)
@@ -95,9 +92,7 @@ def main() -> int:
         "total": len(results),
         "passed": len(results) - fails,
         "failed": fails,
-        "avg_repair_loops": (
-            sum(r.get("repair_loops", 0) for r in results) / max(1, len(results))
-        ),
+        "avg_repair_loops": (sum(r.get("repair_loops", 0) for r in results) / max(1, len(results))),
     }
     print(json.dumps({"summary": summary}, indent=2))
     return 0 if fails == 0 else 1

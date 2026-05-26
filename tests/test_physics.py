@@ -105,7 +105,7 @@ def test_estimate_mission_aggregates(profile):
     m = estimate_mission(legs, profile)
     assert m.total_duration_s > 0
     assert m.total_battery_pct > 0
-    assert math.isclose(sum(l.duration_s for l in m.legs), m.total_duration_s)
+    assert math.isclose(sum(leg.duration_s for leg in m.legs), m.total_duration_s)
 
 
 def test_sensor_swath_increases_with_altitude(profile):

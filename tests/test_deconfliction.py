@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from app.schemas.enums import LegType, MissionStatus, SensorMode
 from app.schemas.plan import MissionLeg, MissionPlan, Waypoint
 from app.validation.deconfliction import (
@@ -32,10 +30,12 @@ def _leg(coords, alt=50.0, lt=LegType.TRANSIT):
 
 
 def test_plan_altitude_band_picks_min_and_max():
-    plan = _plan([
-        _leg([(40.7, -74.1), (40.71, -74.11)], alt=30),
-        _leg([(40.71, -74.11), (40.72, -74.12)], alt=80),
-    ])
+    plan = _plan(
+        [
+            _leg([(40.7, -74.1), (40.71, -74.11)], alt=30),
+            _leg([(40.71, -74.11), (40.72, -74.12)], alt=80),
+        ]
+    )
     band = _plan_altitude_band(plan)
     assert band == (30.0, 80.0)
 
@@ -48,10 +48,12 @@ def test_plan_to_geometry_handles_single_leg():
 
 
 def test_plan_to_geometry_handles_multi_leg():
-    plan = _plan([
-        _leg([(40.7, -74.1), (40.71, -74.11)]),
-        _leg([(40.71, -74.11), (40.72, -74.12)]),
-    ])
+    plan = _plan(
+        [
+            _leg([(40.7, -74.1), (40.71, -74.11)]),
+            _leg([(40.71, -74.11), (40.72, -74.12)]),
+        ]
+    )
     geom = _plan_to_geometry(plan)
     assert geom.geom_type == "MultiLineString"
 
