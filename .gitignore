@@ -9,16 +9,15 @@ build/
 .venv/
 .env
 
-# uv
-uv.lock
-
-# mypy
+# Type checkers / linters
 .mypy_cache/
+.ruff_cache/
 
 # pytest
 .pytest_cache/
 htmlcov/
 .coverage
+.coverage.*
 
 # Jupyter
 .ipynb_checkpoints/
@@ -29,3 +28,8 @@ htmlcov/
 
 # OS
 .DS_Store
+Thumbs.db
+
+# Project — runtime artifacts that should never be committed
+/.playwright-mcp/
+/evals/results/local/
