@@ -23,6 +23,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.config import get_settings
 from app.graph.nodes import (
+    advisor_node,
     clarify_node,
     critique_node,
     finalize_node,
@@ -86,6 +87,7 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g.add_node("plan", plan_node)
     g.add_node("validate", validate_node)
     g.add_node("critique", critique_node)
+    g.add_node("advisor", advisor_node)
     g.add_node("repair", repair_node)
     g.add_node("clarify", clarify_node)
     g.add_node("reject", reject_node)
@@ -106,7 +108,10 @@ def build_graph(checkpointer: Any | None = None) -> Any:
             "reject": "reject",
         },
     )
-    g.add_edge("critique", "finalize")
+    # critique → advisor → finalize. Both advisor and critique are pure-additive
+    # passes; failure inside either node is logged and absorbed (see nodes.py).
+    g.add_edge("critique", "advisor")
+    g.add_edge("advisor", "finalize")
     g.add_edge("repair", "plan")
     g.add_edge("clarify", "finalize")
     g.add_edge("reject", "finalize")

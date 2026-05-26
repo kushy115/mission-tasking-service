@@ -36,6 +36,9 @@ class CompileState(TypedDict, total=False):
     repair_drafts: list[dict[str, Any]]
     confidence_score: float | None  # set by critique node; see DESIGN_DECISIONS §6
     critique_notes: str
+    # Set by the advisor node — a list of optimization suggestions + an optional
+    # resource-constrained fallback. Advisory only; never blocks approval.
+    advisory: dict[str, Any] | None
     alternatives: list[dict[str, Any]]  # extra plans; see DESIGN_DECISIONS §7
     primary_idx: int
     alternatives_requested: bool

@@ -31,7 +31,7 @@ from app.observability.metrics import (
 from app.geo.store import get_engine, load_drone_profile, load_geo_context, save_mission
 from app.graph.state import CompileState
 from app.schemas.enums import MissionStatus
-from app.schemas.plan import MissionPlan
+from app.schemas.plan import MissionPlan, OptimizationAdvisory
 from app.tools.planning_tools import PLANNING_TOOLS
 from app.validation.deconfliction import deconfliction_check
 from app.validation.kernel import validate_plan
@@ -662,6 +662,162 @@ def critique_node(state: CompileState) -> dict[str, Any]:
     return {"confidence_score": score, "critique_notes": notes}
 
 
+# ---- advisor (optimization suggestions) ------------------------------------
+#
+# Runs AFTER critique. Uses LangChain's `with_structured_output` so the LLM is
+# forced to return an OptimizationAdvisory pydantic object — no free-text JSON
+# parsing, no string surgery. The advisor sees: the validated plan, the weather
+# observation, the drone profile, the available drones in the fleet, and the
+# original command. It proposes concrete tweaks the operator could choose to
+# adopt before approving. Failure is non-blocking — the plan still ships.
+#
+# Why this lives in its own node (and not inside critique): the critique pass
+# scores TACTICAL QUALITY on a 0–1 scale. The advisor produces ACTIONABLE
+# CHANGES with structured fields. Different prompts, different output shape,
+# and we want either to be independently skippable if the LLM is down.
+
+_ADVISOR_SYSTEM_PROMPT = """You are a senior drone-operations advisor reviewing
+a mission plan that has ALREADY PASSED the deterministic safety kernel. Your
+job is NOT safety — that is settled. Your job is to suggest concrete tactical
+optimizations the operator should consider before approving the plan.
+
+You will receive:
+  - the operator's original natural-language command
+  - the validated mission plan (legs, sensor choices, altitudes, durations)
+  - current weather conditions at the operating area
+  - the drone profile being used
+  - other drone profiles available in the fleet
+  - estimated battery reserve at landing
+
+Produce 2–4 specific, actionable suggestions. Each must be a slight modification
+the operator could adopt while STILL ACCOMPLISHING the mission goal. Examples
+of good suggestions:
+  - "Rotate the lawnmower sweep 90° to run parallel to the 8 m/s northwest wind
+     — saves ~6% battery vs. cross-wind."
+  - "Swap the EO sensor for IR on leg 2 — visibility is 1800 m due to mist,
+     and IR sees through it for the same coverage."
+  - "Split the 200-acre sweep across two drones at staggered altitudes (40 m
+     and 70 m) — cuts total wall-clock time roughly in half and leaves more
+     battery margin per airframe."
+  - "Drop the loiter from 4 min to 2 min — the EO will already have captured
+     the asset; the extra time bleeds battery you might want as reserve."
+
+If the plan looks RESOURCE-CONSTRAINED (battery reserve under 30%, duration
+within 5 minutes of the rated endurance, or trying to cover too much area for
+one drone), also include a `resource_constrained_fallback`: 1–3 sentences
+describing a scoped-down mission that still accomplishes the PRIMARY goal but
+fits comfortably within resources. Otherwise leave it null.
+
+Each suggestion needs:
+  - title:      one-line headline
+  - rationale:  1–2 sentences explaining why this is better given conditions
+  - impact:     "minor" | "moderate" | "major"
+  - category:   "weather" | "resource" | "coverage" | "coordination" | "tactical"
+
+Do NOT propose changes that would violate the safety kernel (geofence breach,
+crossing NFZs, etc.). Do NOT critique safety — assume the plan is safe.
+"""
+
+
+def advisor_node(state: CompileState) -> dict[str, Any]:
+    """LangChain structured-output advisor. Always advisory — never blocks."""
+    log.info("→ advisor")
+    raw = state.get("draft_plan") or {}
+    plan_status = raw.get("status")
+    if plan_status in (MissionStatus.NEEDS_CLARIFICATION.value, MissionStatus.REJECTED.value):
+        return {}
+    if not raw.get("legs"):
+        return {}
+
+    settings = get_settings()
+    if not settings.api_key:
+        log.info("advisor skipped: no API key configured")
+        return {}
+
+    # Load fleet + drone info so the advisor can recommend multi-drone splits
+    # or different airframes when appropriate.
+    try:
+        from app.geo.store import list_drones
+        fleet = [
+            {
+                "profile_id": d.get("profile_id"),
+                "rated_endurance_min": round((d.get("rated_endurance_s") or 0) / 60.0, 1),
+                "cruise_speed_mps": d.get("cruise_speed_mps"),
+            }
+            for d in (list_drones(get_engine()) or [])
+        ]
+    except Exception as e:  # noqa: BLE001
+        log.warning("advisor: fleet lookup failed: %s", e)
+        fleet = []
+
+    drone_id = (state.get("drone_state") or {}).get("drone_profile_id")
+    drone_profile_info = {}
+    if drone_id:
+        try:
+            profile = load_drone_profile(get_engine(), drone_id)
+            drone_profile_info = {
+                "profile_id": drone_id,
+                "rated_endurance_min": round(profile.rated_endurance_s / 60.0, 1),
+                "cruise_speed_mps": profile.cruise_speed_mps,
+                "sensors": [s.mode.value for s in profile.sensors],
+            }
+        except Exception as e:  # noqa: BLE001
+            log.warning("advisor: drone lookup failed: %s", e)
+
+    wx = state.get("weather") or {}
+    plan_summary = {
+        "legs": [
+            {
+                "leg_type": l.get("leg_type"),
+                "pattern": l.get("pattern_name"),
+                "sensor": l.get("sensor_mode"),
+                "alt_m": (l.get("geometry") or [{}])[0].get("alt_m"),
+                "duration_s": l.get("est_duration_s"),
+                "battery_pct": l.get("est_battery_pct"),
+            }
+            for l in (raw.get("legs") or [])
+        ],
+        "total_duration_s": raw.get("total_duration_s"),
+        "total_battery_pct": raw.get("total_battery_pct"),
+        "battery_reserve_pct": raw.get("battery_reserve_pct"),
+    }
+
+    user_msg = (
+        f"OPERATOR COMMAND: {state.get('raw_command', '')}\n\n"
+        f"DRONE IN USE: {drone_profile_info}\n"
+        f"FLEET (other drones available): {fleet}\n\n"
+        f"WEATHER: {wx.get('summary', 'unknown')}\n"
+        f"  wind {wx.get('wind_mps', '?')} m/s from {wx.get('wind_dir_deg', '?')}°, "
+        f"vis {wx.get('visibility_m', '?')} m, precip {wx.get('precipitation_mmh', 0)} mm/h\n\n"
+        f"PLAN (already passed safety kernel):\n{json.dumps(plan_summary, indent=2)}\n\n"
+        "Produce an OptimizationAdvisory with 2–4 concrete tactical suggestions. "
+        "Include resource_constrained_fallback ONLY if battery reserve is under "
+        "30% OR total duration is within 5 minutes of the drone's rated endurance "
+        "OR the mission scope clearly exceeds one drone's reach."
+    )
+
+    llm = _llm_lazy()
+    provider, model = settings.llm_provider, settings.llm_model
+    start = time.perf_counter()
+    try:
+        # Native LangChain structured-output: the chat model returns a populated
+        # pydantic object. No JSON-string parsing, no fence-stripping.
+        structured_llm = llm.with_structured_output(OptimizationAdvisory)
+        advisory: OptimizationAdvisory = structured_llm.invoke([
+            SystemMessage(content=_ADVISOR_SYSTEM_PROMPT),
+            HumanMessage(content=user_msg),
+        ])
+    except Exception as e:  # noqa: BLE001
+        log.warning("advisor LLM call failed: %s — continuing without it", e)
+        LLM_CALLS_TOTAL.labels(provider, model, "error").inc()
+        LLM_DURATION.labels(provider, model).observe(time.perf_counter() - start)
+        return {}
+    LLM_CALLS_TOTAL.labels(provider, model, "ok").inc()
+    LLM_DURATION.labels(provider, model).observe(time.perf_counter() - start)
+
+    return {"advisory": advisory.model_dump()}
+
+
 # ---- repair / clarify -------------------------------------------------------
 
 
@@ -742,6 +898,12 @@ def finalize_node(state: CompileState) -> dict[str, Any]:  # noqa: D401
         plan.confidence_score = state.get("confidence_score")
     if state.get("critique_notes"):
         plan.critique_notes = state["critique_notes"]
+    if state.get("advisory"):
+        from app.schemas.plan import OptimizationAdvisory
+        try:
+            plan.advisory = OptimizationAdvisory.model_validate(state["advisory"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("advisor payload failed schema: %s", e)
 
     # Record plan-shape metrics only for plans that actually flew through the
     # planner (skip NEEDS_CLARIFICATION/REJECTED-from-intake — those have no

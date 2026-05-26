@@ -60,6 +60,42 @@ class ConstraintReport(BaseModel):
         )
 
 
+class OptimizationSuggestion(BaseModel):
+    """One concrete tweak the advisor recommends to the operator.
+
+    Suggestions are advisory, additive, and never block approval. The advisor
+    is told the plan already passed the safety kernel — its job is tactical
+    judgment ("rotate the sweep cross-wind", "swap to IR for the dawn haze",
+    "add a second drone on layer 70 m") not safety.
+    """
+
+    title: str = Field(..., description="One-line headline, e.g. 'Sweep parallel to wind'.")
+    rationale: str = Field(..., description="Why this is better given current conditions.")
+    impact: str = Field(
+        "moderate",
+        description="One of: minor | moderate | major. Used to sort suggestions in the UI.",
+    )
+    category: str = Field(
+        "tactical",
+        description="One of: weather | resource | coverage | coordination | tactical.",
+    )
+
+
+class OptimizationAdvisory(BaseModel):
+    """Bundle of LLM-authored optimizations attached to a READY_FOR_APPROVAL plan."""
+
+    summary: str = Field("", description="One paragraph framing the advisor's overall take.")
+    suggestions: list[OptimizationSuggestion] = Field(default_factory=list)
+    resource_constrained_fallback: str | None = Field(
+        None,
+        description=(
+            "If the plan is strained by resource limits (battery margin, endurance, "
+            "single-drone capacity vs. area size), a 1–3 sentence sketch of a "
+            "scoped-down mission that still accomplishes the primary goal."
+        ),
+    )
+
+
 class MissionPlan(BaseModel):
     """The output contract: a validated mission plan or a structured non-plan response.
 
@@ -82,3 +118,7 @@ class MissionPlan(BaseModel):
     # Advisory critique (LLM, see DESIGN_DECISIONS.md §6). None = not run.
     confidence_score: float | None = None
     critique_notes: str = ""
+    # Optimization advisor: LangChain structured-output pass that proposes
+    # tactical tweaks (weather-aware re-orientations, multi-drone splits,
+    # resource-constrained scope reductions). Advisory only — never blocks.
+    advisory: OptimizationAdvisory | None = None

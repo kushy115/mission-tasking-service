@@ -106,6 +106,30 @@ class VerifyResponse(BaseModel):
     deviations: list[str]
 
 
+class ChatTurn(BaseModel):
+    role: str = Field(..., description="'user' or 'assistant'")
+    content: str
+
+
+class MissionChatRequest(BaseModel):
+    """Follow-up chat about an already-compiled mission.
+
+    The frontend keeps the full history in memory and sends it on every turn so
+    the backend can stay stateless. The LLM sees: a system prompt scoped to the
+    plan, the prior turns as LangChain messages, and the new user message.
+    """
+
+    history: list[ChatTurn] = Field(
+        default_factory=list,
+        description="Prior turns including the new user message at the end.",
+    )
+
+
+class MissionChatResponse(BaseModel):
+    reply: str
+    mission_id: str
+
+
 class AreaUpsertRequest(BaseModel):
     """Request body for POST /v1/areas — upserts an operating area drawn in the UI."""
 

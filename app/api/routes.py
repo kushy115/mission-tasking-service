@@ -20,6 +20,8 @@ from app.api.models import (
     CompileRequest,
     CompileResponse,
     DroneUpsertRequest,
+    MissionChatRequest,
+    MissionChatResponse,
     VerifyResponse,
 )
 from app.export import EXPORT_FORMATS, render_export
@@ -444,6 +446,101 @@ def export_mission_endpoint(mission_id: str, format: str = "kml") -> Response:
         media_type=spec.media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.post("/v1/missions/{mission_id}:chat", response_model=MissionChatResponse)
+def chat_about_mission(mission_id: str, req: MissionChatRequest) -> MissionChatResponse:
+    """Follow-up conversation with an LLM scoped to one mission.
+
+    The plan + its critique + advisor suggestions are loaded once and injected
+    into the system prompt so the LLM can reason about THIS plan specifically.
+    History is stateless: the client sends every prior turn each time. This
+    keeps the endpoint horizontally scalable and trace-friendly.
+
+    Uses LangChain directly (init_chat_model + Human/AI/SystemMessage). The
+    advisor and critique are NOT re-run here — this is a discussion layer on
+    top of an already-produced plan.
+    """
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+    from app.graph.nodes import _llm_lazy
+
+    raw = load_mission(get_engine(), mission_id)
+    if raw is None:
+        raise HTTPException(status_code=404, detail=f"mission {mission_id} not found")
+    plan = MissionPlan.model_validate(raw)
+
+    if not req.history:
+        raise HTTPException(status_code=400, detail="history must contain at least one user turn")
+    if req.history[-1].role != "user":
+        raise HTTPException(status_code=400, detail="last history turn must be a user message")
+
+    # Compress plan into a chat-friendly summary. We don't dump the whole
+    # waypoint list — that's noise; the LLM reasons about leg-level decisions.
+    leg_lines = []
+    for i, leg in enumerate(plan.legs, 1):
+        alt = leg.geometry[0].alt_m if leg.geometry else 0
+        sensor = leg.sensor_mode.value if leg.sensor_mode else "OFF"
+        leg_lines.append(
+            f"  Leg {i}: {leg.leg_type.value} · {len(leg.geometry)} waypoints · "
+            f"alt~{alt:.0f}m · sensor={sensor} · {leg.est_duration_s:.0f}s · "
+            f"{leg.est_battery_pct:.1f}% battery"
+        )
+
+    advisor_lines = []
+    if plan.advisory:
+        advisor_lines.append(f"Advisor summary: {plan.advisory.summary}")
+        for s in plan.advisory.suggestions:
+            advisor_lines.append(
+                f"  - [{s.impact} · {s.category}] {s.title} — {s.rationale}"
+            )
+        if plan.advisory.resource_constrained_fallback:
+            advisor_lines.append(
+                f"  Fallback if resource-constrained: {plan.advisory.resource_constrained_fallback}"
+            )
+
+    system_prompt = f"""You are a senior drone-operations advisor in a chat with
+the operator about a SPECIFIC mission plan they just compiled. The plan has
+already passed the safety kernel. Your job is to:
+  - answer questions about the plan
+  - propose tweaks the operator could adopt
+  - explain tradeoffs (battery vs coverage, sensor choice vs visibility, etc.)
+  - if the operator wants to change the plan, describe what they should re-prompt
+    the main compile endpoint with — you do NOT modify the plan yourself
+
+Stay concise (1–4 short paragraphs). Be specific about altitudes, leg numbers,
+sensor modes — operators want concrete recommendations, not platitudes. Do NOT
+restate the whole plan; assume the operator can see it on screen.
+
+PLAN UNDER DISCUSSION:
+  mission_id: {plan.mission_id}
+  area: {plan.area_id}
+  status: {plan.status.value}
+  total duration: {plan.total_duration_s:.0f}s ({plan.total_duration_s/60:.1f} min)
+  battery use: {plan.total_battery_pct:.1f}%  reserve at landing: {plan.battery_reserve_pct:.1f}%
+  reasoning: {plan.reasoning_trace}
+  legs:
+{chr(10).join(leg_lines) if leg_lines else '  (no legs)'}
+
+{chr(10).join(advisor_lines) if advisor_lines else '(no advisor output)'}
+"""
+
+    messages: list = [SystemMessage(content=system_prompt)]
+    for turn in req.history:
+        if turn.role == "user":
+            messages.append(HumanMessage(content=turn.content))
+        elif turn.role == "assistant":
+            messages.append(AIMessage(content=turn.content))
+
+    try:
+        ai = _llm_lazy().invoke(messages)
+    except Exception as e:  # noqa: BLE001
+        log.exception("mission chat LLM call failed: %s", e)
+        raise HTTPException(status_code=503, detail=f"LLM unavailable: {e}") from e
+    reply = ai.content if hasattr(ai, "content") else str(ai)
+    if isinstance(reply, list):
+        # Anthropic SDK sometimes returns content as a list of blocks; flatten.
+        reply = "".join(getattr(b, "text", str(b)) for b in reply)
+    return MissionChatResponse(reply=str(reply).strip(), mission_id=mission_id)
 
 
 @router.post("/v1/missions/{mission_id}:verify", response_model=VerifyResponse)

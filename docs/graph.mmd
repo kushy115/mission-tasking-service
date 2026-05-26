@@ -6,10 +6,12 @@ flowchart TD
     intake -->|ambiguous| clarify
     intake -->|unknown area / no clearance| reject
     plan --> validate
-    validate -->|no violations| finalize
+    validate -->|no violations| critique
     validate -->|violations & repair_attempts < 3| repair
     validate -->|violations & repair_attempts >= 3| reject
     validate -->|planner asked to clarify| clarify
+    critique --> advisor
+    advisor --> finalize
     repair --> plan
     clarify --> finalize
     reject --> finalize

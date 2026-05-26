@@ -579,6 +579,118 @@
     .toast.ok  { background: var(--ok-soft);  color: var(--ok);  border: 1px solid rgba(48, 209, 88, 0.28); }
     .toast.err { background: var(--err-soft); color: var(--err); border: 1px solid rgba(255, 69, 58, 0.28); }
 
+    /* ===================================================================
+       ADVISOR — suggestion cards under critique
+       =================================================================== */
+    .advisor-card {
+      background: var(--hairline);
+      border: 1px solid var(--hairline);
+      border-radius: var(--r-sm);
+      padding: 10px 12px;
+      margin-bottom: 6px;
+      transition: all 0.15s;
+    }
+    .advisor-card:hover { background: var(--hairline-2); border-color: var(--hairline-2); }
+    .advisor-card-head {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 4px;
+    }
+    .advisor-card-title {
+      font-size: 12.5px; font-weight: 600; color: var(--fg);
+      line-height: 1.35; flex: 1; min-width: 0;
+      letter-spacing: -0.005em;
+    }
+    .advisor-card-rationale {
+      font-size: 12px; color: var(--fg-dim); line-height: 1.5;
+    }
+    .impact-pill {
+      flex-shrink: 0;
+      font-size: 9.5px; font-weight: 700;
+      padding: 2px 7px; border-radius: 999px;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .impact-pill.major    { background: var(--accent-soft); color: var(--accent); }
+    .impact-pill.moderate { background: var(--warn-soft);   color: var(--warn); }
+    .impact-pill.minor    { background: var(--hairline-2);  color: var(--muted); }
+    .category-chip {
+      font-size: 10px; color: var(--muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .fallback-box {
+      background: var(--warn-soft);
+      border-left: 3px solid var(--warn);
+      padding: 10px 13px;
+      border-radius: 0 var(--r-xs) var(--r-xs) 0;
+      font-size: 12.5px; line-height: 1.55; color: var(--fg);
+      margin-top: 6px;
+    }
+    .fallback-box .fb-label {
+      display: block;
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--warn); font-weight: 700; margin-bottom: 4px;
+    }
+
+    /* ===================================================================
+       MISSION CHAT — persistent follow-up panel in the result card
+       =================================================================== */
+    .mission-chat {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--hairline);
+    }
+    .mission-chat-title {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--fg-dim); font-weight: 600; margin-bottom: 10px;
+    }
+    .mission-chat-title .chat-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    .mission-chat-thread {
+      display: flex; flex-direction: column; gap: 8px;
+      margin-bottom: 10px;
+      max-height: 380px; overflow-y: auto;
+      padding-right: 4px;
+    }
+    .mission-chat-thread:empty + .mission-chat-empty,
+    .mission-chat-empty {
+      font-size: 12px; color: var(--muted);
+      margin-bottom: 10px; line-height: 1.45;
+      padding: 8px 10px;
+      background: var(--hairline);
+      border-radius: var(--r-sm);
+    }
+    .mc-bubble {
+      max-width: 88%;
+      padding: 8px 12px;
+      border-radius: 13px;
+      font-size: 12.5px; line-height: 1.55;
+      white-space: pre-wrap; word-wrap: break-word;
+      animation: fadeIn 0.2s ease;
+    }
+    .mc-bubble.user {
+      align-self: flex-end;
+      background: var(--accent);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .mc-bubble.assistant {
+      align-self: flex-start;
+      background: var(--hairline);
+      color: var(--fg);
+      border-bottom-left-radius: 4px;
+    }
+    .mc-input-row {
+      display: flex; gap: 6px; align-items: flex-end;
+    }
+    .mc-input-row textarea {
+      min-height: 34px; max-height: 110px;
+      padding: 8px 12px; font-size: 12.5px;
+    }
+
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes slideIn { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: translateX(0); } }
     .result-card:not(.hidden) { animation: slideIn 0.28s cubic-bezier(0.32, 0.72, 0, 1); }
@@ -1403,6 +1515,38 @@ window.addEventListener('DOMContentLoaded', () => {
       </div>`;
     }
 
+    // Optimization advisor (DESIGN_DECISIONS §11). Produced by a LangChain
+    // structured-output call after the safety kernel passes. Advisory only —
+    // never blocks approval. Empty/null when the plan wasn't READY or the LLM
+    // skipped it (no API key, transient failure).
+    if (p.advisory && (p.advisory.suggestions?.length || p.advisory.resource_constrained_fallback)) {
+      const adv = p.advisory;
+      html += `<div class="section">
+        <div class="section-title">Optimization advisor <span style="color:var(--muted); font-weight:400; text-transform:none; letter-spacing:0;">(${adv.suggestions?.length || 0} suggestion${(adv.suggestions?.length || 0) === 1 ? '' : 's'})</span></div>`;
+      if (adv.summary) {
+        html += `<div class="reasoning" style="border-left-color: var(--accent); margin-bottom: 10px;">${escapeHtml(adv.summary)}</div>`;
+      }
+      const order = { major: 0, moderate: 1, minor: 2 };
+      const sorted = (adv.suggestions || []).slice().sort((a, b) =>
+        (order[a.impact] ?? 3) - (order[b.impact] ?? 3));
+      html += sorted.map(s => `
+        <div class="advisor-card">
+          <div class="advisor-card-head">
+            <span class="impact-pill ${escapeHtml(s.impact || 'moderate')}">${escapeHtml(s.impact || 'moderate')}</span>
+            <span class="advisor-card-title">${escapeHtml(s.title || '')}</span>
+            <span class="category-chip">${escapeHtml(s.category || 'tactical')}</span>
+          </div>
+          <div class="advisor-card-rationale">${escapeHtml(s.rationale || '')}</div>
+        </div>`).join('');
+      if (adv.resource_constrained_fallback) {
+        html += `<div class="fallback-box">
+          <span class="fb-label">Resource-constrained fallback</span>
+          ${escapeHtml(adv.resource_constrained_fallback)}
+        </div>`;
+      }
+      html += `</div>`;
+    }
+
     // Weather (if the constraints report carries the detail string).
     const wxDetail = p.constraints_satisfied?.weather_acceptable_detail;
     if (wxDetail && wxDetail !== 'not evaluated') {
@@ -1449,12 +1593,38 @@ window.addEventListener('DOMContentLoaded', () => {
       </div>`;
     }
 
+    // Persistent follow-up chat (right side of screen, in the result panel).
+    // Shown for any plan with a mission_id — operator can ask questions,
+    // request modifications, or discuss the advisor's suggestions. State is
+    // kept in `missionChatHistories[mission_id]` so switching missions
+    // preserves each thread independently.
+    if (p.mission_id && p.status !== 'NEEDS_CLARIFICATION') {
+      const turns = missionChatHistories[p.mission_id] || [];
+      html += `<div class="mission-chat">
+        <div class="mission-chat-title">
+          <span class="chat-dot"></span>
+          Chat with the planner
+        </div>
+        <div class="mission-chat-thread" id="mc-thread">
+          ${turns.map(t => `<div class="mc-bubble ${t.role}">${escapeHtml(t.content)}</div>`).join('')}
+        </div>
+        ${turns.length === 0 ? `<div class="mission-chat-empty">Ask follow-ups about this plan, request tactical tweaks, or explore the advisor's suggestions. Conversation history is kept per mission.</div>` : ''}
+        <div class="mc-input-row">
+          <textarea id="mc-input" placeholder="Ask about the plan… (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
+          <button class="chat-send" id="mc-send" title="Send (Enter)">
+            <svg viewBox="0 0 24 24"><path d="M5 12l14-7-7 14-2-5-5-2z" stroke="currentColor" fill="none" stroke-width="2"/></svg>
+          </button>
+        </div>
+      </div>`;
+    }
+
     resultEl.innerHTML = html;
 
     $('approve')?.addEventListener('click', () => submitApproval(true));
     $('reject')?.addEventListener('click', () => submitApproval(false));
     $('verify')?.addEventListener('click', runVerify);
     $('live-sim')?.addEventListener('click', startLiveSim);
+    wireMissionChat(p.mission_id);
 
     document.querySelectorAll('.alt-chip').forEach(chip =>
       chip.addEventListener('click', () => {
@@ -1994,6 +2164,80 @@ window.addEventListener('DOMContentLoaded', () => {
       btn.disabled = false; btn.innerHTML = '✨ Research area';
     }
   });
+
+  // ===========================================================
+  // MISSION CHAT — persistent follow-up panel
+  // ===========================================================
+  // Histories are scoped per mission_id so switching missions in the history
+  // drawer keeps each thread separate. Stateless on the server: every send
+  // posts the full history; the LLM gets it as proper LangChain messages.
+  const missionChatHistories = {};
+
+  function wireMissionChat(missionId) {
+    if (!missionId) return;
+    const inp = $('mc-input');
+    const send = $('mc-send');
+    const thread = $('mc-thread');
+    if (!inp || !send || !thread) return;
+
+    inp.addEventListener('input', () => {
+      inp.style.height = 'auto';
+      inp.style.height = Math.min(inp.scrollHeight, 110) + 'px';
+    });
+
+    const appendBubble = (role, content) => {
+      const empty = thread.parentElement?.querySelector('.mission-chat-empty');
+      if (empty) empty.remove();
+      const b = document.createElement('div');
+      b.className = `mc-bubble ${role}`;
+      b.textContent = content;
+      thread.appendChild(b);
+      thread.scrollTop = thread.scrollHeight;
+    };
+
+    const submit = async () => {
+      const text = inp.value.trim();
+      if (!text) return;
+      const history = missionChatHistories[missionId] || (missionChatHistories[missionId] = []);
+      history.push({ role: 'user', content: text });
+      appendBubble('user', text);
+      inp.value = '';
+      inp.style.height = 'auto';
+      send.disabled = true;
+      send.innerHTML = '<span class="spinner"></span>';
+      // Optimistic typing indicator while the LLM works.
+      const typing = document.createElement('div');
+      typing.className = 'mc-bubble assistant';
+      typing.innerHTML = '<span class="spinner" style="color:var(--muted)"></span> thinking…';
+      thread.appendChild(typing);
+      thread.scrollTop = thread.scrollHeight;
+      try {
+        const r = await fetch(`/v1/missions/${encodeURIComponent(missionId)}:chat`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ history }),
+        });
+        const body = await r.json();
+        typing.remove();
+        if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+        const reply = body.reply || '(no response)';
+        history.push({ role: 'assistant', content: reply });
+        appendBubble('assistant', reply);
+      } catch (e) {
+        typing.remove();
+        appendBubble('assistant', '⚠ Chat failed: ' + e.message);
+      } finally {
+        send.disabled = false;
+        send.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 12l14-7-7 14-2-5-5-2z" stroke="currentColor" fill="none" stroke-width="2"/></svg>';
+        inp.focus();
+      }
+    };
+
+    send.addEventListener('click', submit);
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+    });
+  }
 
   loadAreas();
   loadDrones();
