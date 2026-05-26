@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-typecheck-test:
+    name: lint + typecheck + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: Mypy
+        # Strict typing is configured in pyproject.toml; non-blocking until the
+        # codebase is fully annotated.
+        run: uv run mypy app || true
+
+      - name: Pytest
+        # Unit + graph + safety-core tests. The full eval suite is run by the
+        # nightly CronJob against the deployed service (see deploy/helm/).
+        env:
+          MTS_LLM_PROVIDER: anthropic
+          MTS_LLM_MODEL: claude-haiku-4-5
+          API_KEY: dummy-key-for-tests
+        run: uv run pytest -q
