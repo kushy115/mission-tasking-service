@@ -147,3 +147,24 @@ class AreaUpsertResponse(BaseModel):
     home_lat: float
     nfz_count: int
     home_was_snapped: bool
+
+
+class SupervisorInjectRequest(BaseModel):
+    """Inject an in-flight event into a live mission session.
+
+    `session_id` is the per-WS client identifier (UUID-ish; UI generates it
+    before opening the WebSocket and passes it both in the WS query string
+    and on this POST). The supervisor's policy reads the event off the queue
+    on its next tick. See DESIGN_DECISIONS DD-014.
+    """
+
+    session_id: str = Field(..., min_length=1, max_length=64)
+    type: str = Field(..., description="EventType value (e.g. WIND_SPIKE)")
+    payload: dict = Field(default_factory=dict)
+    note: str = Field("", max_length=256)
+
+
+class SupervisorInjectResponse(BaseModel):
+    accepted: bool
+    queue_size: int
+    detail: str = ""

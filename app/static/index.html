@@ -1670,6 +1670,9 @@ window.addEventListener('DOMContentLoaded', () => {
     if (liveSim.marker) map.removeLayer(liveSim.marker);
     if (liveSim.trail) map.removeLayer(liveSim.trail);
     if (liveSim.panel) liveSim.panel.remove();
+    if (liveSim.supBanner) liveSim.supBanner.remove();
+    if (liveSim.injectMenu) liveSim.injectMenu.remove();
+    if (liveSim.replanLayer) map.removeLayer(liveSim.replanLayer);
     liveSim = null;
   }
 
@@ -1677,8 +1680,10 @@ window.addEventListener('DOMContentLoaded', () => {
     if (!currentPlan || !currentPlan.legs?.length) return;
     if (liveSim) stopLiveSim();
 
+    // Session id ties the WS stream to its event-inject queue (DD-014).
+    const sessionId = (crypto.randomUUID ? crypto.randomUUID() : ('s-' + Date.now() + '-' + Math.random().toString(36).slice(2)));
     const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${wsProto}//${location.host}/ws/missions/${encodeURIComponent(currentPlan.mission_id)}/sim?speed=10`;
+    const url = `${wsProto}//${location.host}/ws/missions/${encodeURIComponent(currentPlan.mission_id)}/sim?speed=10&session_id=${encodeURIComponent(sessionId)}`;
     const ws = new WebSocket(url);
 
     const marker = L.circleMarker([0, 0], {
@@ -1704,7 +1709,88 @@ window.addEventListener('DOMContentLoaded', () => {
       <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Leg</div><div id="sim-leg" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">—</div></div>
     `;
     document.body.appendChild(panel);
-    liveSim = { ws, marker, trail, panel };
+
+    // Supervisor banner — appears when a non-CONTINUE decision lands.
+    const supBanner = document.createElement('div');
+    supBanner.className = 'glass';
+    supBanner.style.cssText = `
+      position: fixed; top: 150px; left: 50%; transform: translateX(-50%);
+      border: 1px solid var(--warn); padding: 10px 16px; z-index: 1300;
+      min-width: 420px; font-size: 12px; display: none;
+    `;
+    document.body.appendChild(supBanner);
+
+    // Event-inject menu — a small floating control with one button per type.
+    const injectMenu = document.createElement('div');
+    injectMenu.className = 'glass';
+    injectMenu.style.cssText = `
+      position: fixed; bottom: 24px; right: 24px; z-index: 1300;
+      padding: 10px 12px; font-size: 11px; display: grid; gap: 6px;
+      grid-template-columns: 1fr; min-width: 200px;
+    `;
+    const injectMissionId = currentPlan.mission_id;
+    const injectButtons = [
+      { type: 'WIND_SPIKE',    label: 'Wind spike 15 m/s',   payload: { wind_mps: 15 } },
+      { type: 'NFZ_POPUP',     label: 'Pop-up NFZ ahead',    payload: { polygon: null /* filled below */ } },
+      { type: 'BATTERY_FAULT', label: 'Battery fault +0.1%/s', payload: { extra_drain_pct_s: 0.1 } },
+      { type: 'SENSOR_FAULT',  label: 'EO sensor offline',   payload: { mode: 'EO' } },
+      { type: 'GPS_DROPOUT',   label: 'GPS dropout',         payload: {} },
+      { type: 'MANUAL_RTB',    label: 'Manual RTB',          payload: {} },
+      { type: 'MANUAL_LAND',   label: 'Emergency land',      payload: {} },
+    ];
+    injectMenu.innerHTML = `<div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:2px;">Inject event</div>`;
+    injectButtons.forEach((cfg) => {
+      const b = document.createElement('button');
+      b.className = 'btn';
+      b.style.cssText = 'font-size:11px; padding:6px 10px; text-align:left;';
+      b.textContent = cfg.label;
+      b.onclick = async () => {
+        let payload = { ...cfg.payload };
+        if (cfg.type === 'NFZ_POPUP') {
+          // Drop a small square NFZ centered ~50m ahead of current drone position
+          // (or at map center as fallback).
+          const center = liveSim?.marker?.getLatLng?.() || map.getCenter();
+          const d = 0.0008; // ~80m
+          payload.polygon = {
+            type: 'Polygon',
+            coordinates: [[
+              [center.lng - d, center.lat - d],
+              [center.lng + d, center.lat - d],
+              [center.lng + d, center.lat + d],
+              [center.lng - d, center.lat + d],
+              [center.lng - d, center.lat - d],
+            ]],
+          };
+        }
+        try {
+          const r = await fetch(`/v1/missions/${encodeURIComponent(injectMissionId)}/sim:inject`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, type: cfg.type, payload, note: '' }),
+          });
+          if (!r.ok) { const t = await r.text(); console.warn('inject failed', r.status, t); }
+        } catch (e) { console.warn('inject error', e); }
+      };
+      injectMenu.appendChild(b);
+    });
+    document.body.appendChild(injectMenu);
+
+    liveSim = { ws, marker, trail, panel, supBanner, injectMenu, replanLayer: null };
+
+    function showSupervisorBanner(msg) {
+      supBanner.style.display = 'block';
+      supBanner.innerHTML = msg;
+    }
+    function drawReplanPlan(plan) {
+      // Grey out the original plan and overlay the new one in cyan.
+      if (liveSim.replanLayer) { try { map.removeLayer(liveSim.replanLayer); } catch (_) {} }
+      const coords = [];
+      for (const leg of plan.legs || []) {
+        for (const wp of leg.geometry || []) coords.push([wp.lat, wp.lon]);
+      }
+      if (!coords.length) return;
+      liveSim.replanLayer = L.polyline(coords, { color: '#00e1ff', weight: 4, opacity: 0.95, dashArray: '8 4' }).addTo(map);
+    }
 
     ws.onopen = () => { panel.querySelector('#sim-status').textContent = 'flying'; };
     ws.onerror = () => { panel.querySelector('#sim-status').textContent = 'ws error'; panel.querySelector('#sim-status').style.color = 'var(--err)'; };
@@ -1713,6 +1799,19 @@ window.addEventListener('DOMContentLoaded', () => {
     ws.onmessage = (evt) => {
       const f = JSON.parse(evt.data);
       if (f.error) { panel.querySelector('#sim-status').textContent = f.error; return; }
+
+      // Supervisor decision frame (DD-014).
+      if (f.kind === 'supervisor') {
+        const tag = f.decision === 'CONTINUE'
+          ? `<span style="color:var(--muted);">CONTINUE</span>`
+          : `<strong style="color:var(--warn);">${f.decision}</strong>`;
+        const eventList = (f.events || []).map(e => e.type).join(', ') || '—';
+        showSupervisorBanner(`${tag} · ${f.reason} <br><small style="opacity:0.75;">events: ${eventList}${f.plan_swapped ? ' · plan swapped' : ''}</small>`);
+        if (f.plan_swapped && f.new_plan) drawReplanPlan(f.new_plan);
+        return;
+      }
+
+      // Telemetry frame (default; legacy frames without `kind` also fall here).
       const ll = [f.lat, f.lon];
       if (!marker._added) { marker.addTo(map); trail.addTo(map); marker._added = true; }
       marker.setLatLng(ll);

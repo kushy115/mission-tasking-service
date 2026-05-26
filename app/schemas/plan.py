@@ -21,7 +21,11 @@ class MissionLeg(BaseModel):
     pattern_name: PatternName | None = None
     sensor_mode: SensorMode | None = None
     est_duration_s: float = Field(..., ge=0.0)
-    est_battery_pct: float = Field(..., ge=0.0, le=100.0)
+    # NOTE: no upper bound — this is *consumption*, not "remaining". A leg whose
+    # geometry can't be flown on a full charge legitimately reports >100, and the
+    # safety kernel needs that real number to reject via battery_within_budget.
+    # Capping here would silently hide infeasible plans.
+    est_battery_pct: float = Field(..., ge=0.0)
 
 
 class ConstraintReport(BaseModel):

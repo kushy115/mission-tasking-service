@@ -726,3 +726,213 @@ reachable from the host (port-forward when running under k8s).
 
 **Where in code.** Not in the repo — MCP config is per-developer machine
 state. Install commands captured in README "Developer MCP setup" section.
+
+---
+
+## DD-013 — `MissionLeg.est_battery_pct` is unbounded above (consumption, not remaining)
+
+**Decision.** Dropped the `le=100.0` constraint on `MissionLeg.est_battery_pct`
+in `app/schemas/plan.py`. Lower bound `ge=0.0` stays — negative consumption is
+nonsensical.
+
+**Why.** The field is *consumption for this leg*, not "remaining battery." When
+DD-010's deterministic search-pattern densifier replaces the LLM's sparse
+waypoints with a fitted lawnmower and then calls `physics.estimate_leg` on it,
+the recomputed consumption can legitimately exceed 100 % (the densified leg is
+larger than a full charge can sustain). With the upper bound in place, the
+sequence was:
+
+1. `plan_node` constructs `MissionPlan` from the LLM's JSON (fine — LLM
+   estimates stay <100).
+2. Post-processing block sets `leg.est_battery_pct = energy.battery_pct` —
+   sneaks past the constraint because pydantic v2 does not validate on
+   assignment without `validate_assignment=True`.
+3. `validate_node` calls `MissionPlan.model_validate(raw)` on the dumped dict,
+   pydantic re-checks `le=100.0`, and raises a `ValidationError` that
+   propagates to the API client as a 500 (or, on a follow-up clarification, a
+   "Follow-up failed" toast). The kernel never gets to run.
+
+The right behavior is for the safety kernel to see the real over-budget number
+and reject via `battery_within_budget` (which it already does — `reserve_pct =
+starting_pct - total_battery_pct` goes negative and fails the `>=
+reserve_min_pct` check, producing a clean violation message like
+`estimated_use=181.9%; reserve=-81.9% (min 20%)`). Repair loop kicks in; if it
+can't shrink the plan in 3 tries it ends in `REJECTED` — the correct outcome.
+
+**Trade-off.** UI / export code that formats `est_battery_pct` as a percent
+(e.g. `f"{leg.est_battery_pct:.1f}% battery"` in `routes.py:486`) will now
+sometimes render values like `181.9% battery`. That's accurate — it's an
+infeasibility signal — and only appears on plans the kernel is about to
+reject anyway. No downstream code assumed the bound for arithmetic.
+
+**Where in code.** `app/schemas/plan.py` (`MissionLeg.est_battery_pct`),
+`app/graph/nodes.py` (post-processing in `plan_node`),
+`app/validation/kernel.py` (`_battery_ok` consumes the unbounded value).
+
+---
+
+## DD-014 — Inflight Supervisor (closed-loop replanning during live execution)
+
+**Status:** implemented.
+**Files:** `app/supervisor/` (new package: `events.py`, `state.py`,
+`policy.py`, `nodes.py`, `builder.py`, `orchestrator.py`),
+`app/api/models.py` (`SupervisorInjectRequest/Response`),
+`app/api/routes.py` (`POST /v1/missions/{id}/sim:inject`),
+`app/main.py` (WS handler routes through `live_mission_session`),
+`app/static/index.html` (inject menu, supervisor banner, cyan replan
+overlay), `tests/test_supervisor.py`, `evals/dataset_supervisor.jsonl`.
+
+### What
+A second decision graph runs alongside the existing live-sim WebSocket
+(DD-§10). Every ~1 Hz tick — or whenever an operator-injected event arrives
+on the per-session queue — the supervisor evaluates the current telemetry
+plus pending events and emits one of five decisions:
+`CONTINUE | REPLAN_FROM_HERE | DIVERT_TO_SAFE_POINT | RTB_NOW | EMERGENCY_LAND`.
+Non-`CONTINUE` decisions swap the live plan in-place: the orchestrator
+terminates the current `telemetry_stream` generator, builds a replacement
+plan (direct-to-home for RTB / DIVERT, descend-in-place for EMERGENCY_LAND,
+synthesized warm-start for REPLAN), and starts a fresh stream from the
+drone's current `(lat, lon, alt, battery_pct)`.
+
+Events supported (`app/supervisor/events.py`): `WIND_SPIKE`, `NFZ_POPUP`,
+`BATTERY_FAULT`, `SENSOR_FAULT`, `GPS_DROPOUT`, `MANUAL_RTB`,
+`MANUAL_LAND`. The UI exposes one button per type in a floating inject menu
+shown only while a live session is active.
+
+### Why
+The biggest qualitative gap in the prior architecture was that planning was
+*offline*: a plan was computed once, frozen at approval, and the live sim
+just replayed it. Real autonomy is closed-loop — the airframe encounters
+conditions the planner couldn't have known about and must react.
+DD-014 closes that loop without changing the deterministic safety kernel
+(which is still the source of truth on safety): the supervisor's LLM-free
+policy *proposes* a decision; the existing kernel can still reject any
+synthesized plan via the normal `validate_plan` path. Net effect: the
+service goes from "plan once" to "plan, fly, react, re-plan."
+
+### Key choices
+
+- **The supervisor's decision policy is deterministic, not LLM-based.**
+  Per-tick LLM calls would queue past the 5 Hz tick deadline, blow the demo
+  token budget, and make decisions irreproducible across test runs. The
+  policy is a small priority-ordered rule set in `app/supervisor/policy.py`
+  (`MANUAL_LAND > MANUAL_RTB > BATTERY_FAULT > NFZ_POPUP > WIND_SPIKE >
+  SENSOR_FAULT > GPS_DROPOUT`, plus an always-on background "can I still
+  make it home with margin?" check). An LLM-flavored tactical advisor
+  invoked at most once per event is a documented future extension; the
+  current architecture leaves the seam (`policy.decide` is the only call
+  site).
+
+- **One LangGraph subgraph, no checkpointer.** The supervisor is compiled
+  once at import time (`app/supervisor/builder.py`) and invoked per
+  decision: `assess → decide → (replan | commit) → END`. Each invocation
+  is stateless. Persistence (mission audit trail, replan history) is the
+  orchestrator's concern, not the subgraph's — keeps the graph small,
+  testable, and free of the Postgres-checkpointer coupling the main
+  compile graph carries.
+
+- **Plan swaps work by terminating the current `telemetry_stream`
+  generator and starting a new one.** The orchestrator owns the active
+  `MissionPlan` in a local variable and re-anchors a fresh
+  `telemetry_stream(...)` from the new plan + the current battery
+  whenever a non-`CONTINUE` decision lands. This keeps `app/sim/stream.py`
+  untouched — it doesn't need to know about supervision. The cost is one
+  extra async generator allocation per swap, which is negligible.
+
+- **Per-WebSocket event queue, registered by `(mission_id, session_id)`.**
+  The UI generates a `session_id` (UUID) on `startLiveSim()` and passes it
+  both as a WS query param and in every `POST /v1/missions/{id}/sim:inject`
+  body. Two browser tabs watching the same mission get independent queues,
+  so injecting an event in one tab doesn't affect the other. Queues live
+  in a process-local dict (`app/supervisor/events.py:_QUEUES`); horizontal
+  scale-out would need to swap this for Redis pub/sub or sticky sessions
+  (the chart's HPA is already on inflight-requests, so a single hot
+  replica is already the common case).
+
+- **Frame schema: `kind` discriminator on every WebSocket frame.**
+  Telemetry frames are `{kind: "telemetry", t, lat, lon, alt_m,
+  battery_pct, leg_idx, leg_type, sensor_mode, status, detail}`.
+  Supervisor frames are `{kind: "supervisor", decision, reason, events,
+  plan_swapped, new_plan, replans_used}`. The UI switches on `kind`. The
+  legacy unsupervised path (omit `session_id` query param) still works
+  and emits flat telemetry frames the old UI handler can read — `kind`
+  is additive.
+
+- **Plan synthesis is pure-Python, not LLM.** RTB and EMERGENCY_LAND
+  plans are constructed from waypoints + the same `physics.estimate_leg`
+  the planner uses, so the kernel's `battery_within_budget` and
+  `within_endurance` checks would still apply if we routed the synthesized
+  plan back through `validate_plan` (a hardening step queued for a
+  follow-up; right now the orchestrator trusts the synthesized geometry
+  because it's deterministic and bounded).
+
+- **Hard cap of 3 plan swaps per session** (`MAX_REPLANS_PER_SESSION`).
+  Mirrors the compile graph's repair-loop cap and protects against
+  thrash if an event source keeps firing. Excess decisions are surfaced
+  as `CONTINUE` with a reason string.
+
+- **Supervisor errors are absorbed, never block the stream.** Every entry
+  point (`decide_node`, `replan_node`, `orchestrator.live_mission_session`)
+  wraps in try/except and falls through to `CONTINUE`. The supervisor is
+  additive: if it goes sideways, the existing live sim still finishes the
+  static plan.
+
+- **`app/supervisor/__init__.py` is intentionally empty.** Importing one
+  submodule (`app.supervisor.policy`) for unit tests should NOT
+  cascade-load the orchestrator, schemas, kernel, and physics. Tests
+  import the specific module they need.
+
+### Trade-offs
+
+- **No real LLM-driven "preserve the objective" replan.** The current
+  REPLAN_FROM_HERE branch synthesizes a direct-to-home transit + RTB
+  (same shape as plain RTB). A richer replan would call the compile graph
+  with a warm-start command ("from `(lat, lon)`, complete the remaining
+  search of region X then RTB"). The seam is `replan_node` in
+  `app/supervisor/nodes.py` — swap the body to invoke
+  `app.state.compile_graph.invoke(...)` with a transformed `CompileState`,
+  and route the result through the existing validate / critique / advisor
+  chain. Skipped here because the demo value is in showing the *loop*,
+  not in proving the loop's reach.
+- **In-process event queue dict.** Single-replica friendly, multi-replica
+  fragile. See the choice section above.
+- **Synthesized replans skip the full kernel validation.** They're
+  deterministic and constrained by construction (geofence is on the home
+  point; altitude is clamped to the ceiling), so the kernel would pass
+  them — but we currently take that on faith rather than re-running
+  `validate_plan` on the synthesized plan. Cheap to add when needed.
+
+### How to demo
+
+1. Compile a mission and approve it.
+2. Click **Run live sim** in the UI. The cyan drone marker starts
+   animating along the plan. Bottom-right: the **Inject event** menu.
+3. Click any button — e.g. **Wind spike 15 m/s**. The supervisor banner
+   appears at the top showing `RTB_NOW · wind 15.0 m/s > tolerance
+   12.0 m/s · plan swapped`. The original plan greys out (figuratively;
+   the trail remains), and a cyan dashed polyline shows the new
+   direct-to-home plan.
+4. Click **Pop-up NFZ ahead** while the drone is in a search pattern.
+   The supervisor sees the polygon intersect the remaining path, emits
+   `REPLAN_FROM_HERE`, and swaps to a synthesized RTB (the demo's
+   stand-in for a full re-plan).
+
+### Where in code
+
+- `app/supervisor/policy.py` — pure `decide(...)` function; all policy.
+- `app/supervisor/nodes.py` — LangGraph nodes (assess, decide, replan,
+  commit).
+- `app/supervisor/builder.py` — `build_supervisor()` cached compile.
+- `app/supervisor/orchestrator.py` — `live_mission_session(...)` async
+  generator the WS handler consumes; owns the plan-swap loop and the
+  event queue lifetime.
+- `app/main.py` — WS handler delegates to `live_mission_session` when
+  `session_id` is supplied; legacy unsupervised path preserved.
+- `app/api/routes.py` — `POST /v1/missions/{mission_id}/sim:inject`.
+- `app/static/index.html` — inject menu, supervisor banner, cyan replan
+  polyline overlay.
+- `tests/test_supervisor.py` — 13 policy tests, all green.
+- `evals/dataset_supervisor.jsonl` — 10 scenario rows (current telemetry
+  + events → expected decision), ready to run through the policy.
+
+

@@ -22,6 +22,8 @@ from app.api.models import (
     DroneUpsertRequest,
     MissionChatRequest,
     MissionChatResponse,
+    SupervisorInjectRequest,
+    SupervisorInjectResponse,
     VerifyResponse,
 )
 from app.export import EXPORT_FORMATS, render_export
@@ -562,4 +564,41 @@ def verify_mission(mission_id: str) -> VerifyResponse:
         actual_duration_s=result.actual_duration_s,
         actual_battery_pct=result.actual_battery_pct,
         deviations=result.deviations,
+    )
+
+
+@router.post(
+    "/v1/missions/{mission_id}/sim:inject",
+    response_model=SupervisorInjectResponse,
+)
+def inject_supervisor_event(
+    mission_id: str, req: SupervisorInjectRequest
+) -> SupervisorInjectResponse:
+    """Inject an in-flight event for the live supervisor (DD-014).
+
+    The active live session is identified by `(mission_id, session_id)`. If
+    no such session is currently streaming, returns 404. The event is dropped
+    on the queue and consumed by the supervisor on its next decision tick.
+    """
+    from app.supervisor.events import Event, get_queue
+
+    q = get_queue(mission_id, req.session_id)
+    if q is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no active live session for mission_id={mission_id!r}, "
+                   f"session_id={req.session_id!r}",
+        )
+    try:
+        event = Event.from_dict({"type": req.type, "payload": req.payload, "note": req.note})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        q.put_nowait(event)
+    except Exception as e:  # noqa: BLE001 — queue full
+        raise HTTPException(
+            status_code=503, detail=f"event queue full: {e}",
+        ) from e
+    return SupervisorInjectResponse(
+        accepted=True, queue_size=q.qsize(), detail=f"queued {event.type.value}",
     )

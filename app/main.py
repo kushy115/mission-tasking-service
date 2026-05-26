@@ -78,11 +78,23 @@ def create_app() -> FastAPI:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     @app.websocket("/ws/missions/{mission_id}/sim")
-    async def mission_sim_socket(websocket: WebSocket, mission_id: str, speed: float = 10.0):
-        """Live telemetry stream for a saved mission. See DESIGN_DECISIONS §10."""
+    async def mission_sim_socket(
+        websocket: WebSocket,
+        mission_id: str,
+        speed: float = 10.0,
+        session_id: str = "",
+    ):
+        """Live telemetry stream for a saved mission.
+
+        Telemetry path is DD-§10. When `session_id` is supplied (the UI does so
+        by default), the stream is wrapped by the inflight supervisor (DD-014)
+        so that events injected via `POST /v1/missions/{id}/sim:inject` can
+        trigger CONTINUE / RTB / REPLAN / EMERGENCY_LAND decisions live.
+        """
         from app.geo.store import get_engine, load_drone_profile, load_geo_context, load_mission
         from app.schemas.plan import MissionPlan
         from app.sim.stream import telemetry_stream
+        from app.supervisor.orchestrator import live_mission_session
 
         await websocket.accept()
         try:
@@ -94,19 +106,39 @@ def create_app() -> FastAPI:
             plan = MissionPlan.model_validate(raw)
             # Production would persist the drone profile with the plan; for the
             # demo we use the long-endurance default.
-            profile = load_drone_profile(get_engine(), "long-endurance-quad")
+            drone_profile_id = "long-endurance-quad"
+            profile = load_drone_profile(get_engine(), drone_profile_id)
             try:
                 geo = load_geo_context(get_engine(), plan.area_id)
             except Exception:  # noqa: BLE001
                 geo = None
             speed = max(0.5, min(float(speed or 10.0), 100.0))
-            async for frame in telemetry_stream(plan, profile, geo, speed=speed):
-                try:
-                    await websocket.send_json(frame.to_dict())
-                except Exception:  # noqa: BLE001
-                    # Backpressure or client disconnect: drop and stop.
-                    log.info("ws sim stream send failed; closing")
-                    return
+
+            if session_id:
+                # Supervised path: orchestrator owns the queue + plan swapping.
+                async for frame in live_mission_session(
+                    mission_id=mission_id,
+                    session_id=session_id,
+                    plan=plan,
+                    profile=profile,
+                    geo=geo,
+                    area_id=plan.area_id,
+                    drone_profile_id=drone_profile_id,
+                    speed=speed,
+                ):
+                    try:
+                        await websocket.send_json(frame)
+                    except Exception:  # noqa: BLE001
+                        log.info("ws sim stream send failed; closing")
+                        return
+            else:
+                # Legacy unsupervised path (back-compat for callers w/o session_id).
+                async for frame in telemetry_stream(plan, profile, geo, speed=speed):
+                    try:
+                        await websocket.send_json({"kind": "telemetry", **frame.to_dict()})
+                    except Exception:  # noqa: BLE001
+                        log.info("ws sim stream send failed; closing")
+                        return
         except WebSocketDisconnect:
             log.info("ws sim stream client disconnected")
         finally:
