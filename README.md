@@ -23,25 +23,52 @@ observability, containerization, and Kubernetes deployment.
 
 ---
 
+## Prerequisites
+
+Everything runs inside Docker for the demo path, so the host install is small:
+
+- **Docker Desktop** running (Mac, Linux, or Windows). On Apple Silicon Macs use the standard ARM build — `postgis/postgis:16-3.4` and all other images have arm64 variants.
+- **`make`** — preinstalled on macOS once Xcode Command Line Tools are present (`xcode-select --install` if not). Linux: `apt install make`. Windows: use WSL2.
+- **~6 GB free RAM** for the six-container stack.
+- **One LLM API key.** Default is Anthropic (Claude). Any of these work — pick one and fill it into `.env`:
+
+  | Provider | `MTS_LLM_PROVIDER` | Sample `MTS_LLM_MODEL` | `API_KEY` format |
+  | --- | --- | --- | --- |
+  | Anthropic *(default)* | `anthropic` | `claude-haiku-4-5` | `sk-ant-...` |
+  | OpenAI | `openai` | `gpt-4o-mini` | `sk-...` |
+  | Google | `google_genai` | `gemini-2.5-flash` | `AIzaSy...` |
+
+No system Python or `uv` install is needed for the demo — both live inside the container. The host-side `uv`/`mypy`/`pytest` workflow (covered under [Local development](#local-development)) is for editing the code.
+
+---
+
 ## TL;DR
 
 ```sh
 git clone https://github.com/kushy115/mission-tasking-service
 cd mission-tasking-service
-cp .env.example .env    # fill API_KEY at minimum
-make demo               # docker compose up + seed + compile a sample mission
+cp .env.example .env                            # then edit and set API_KEY=...
+make demo                                       # build + up + seed + sample compile
 ```
 
-Open the UI at <http://localhost:8000>, Grafana at <http://localhost:3000>
-(admin / admin). `make help` lists every developer target.
+When `make demo` finishes you'll see:
+
+- **UI** — <http://localhost:8000> (draw an area, compile a mission, watch the live sim)
+- **Grafana** — <http://localhost:3000> (admin / admin; the MTS dashboard auto-provisions)
+- **Prometheus** — <http://localhost:9090>
+
+Stop with `make down` (preserves the Postgres volume) or `make clean` (wipes it). `make help` lists every target.
 
 ---
 
 ## Architecture
 
-The compile flow is a LangGraph `StateGraph` with six nodes, a bounded repair
-loop, and a human-approval interrupt. The full diagram lives in
-[`docs/graph.mmd`](./docs/graph.mmd).
+The compile flow is a LangGraph `StateGraph` with nine nodes (the happy path is
+six: `intake → plan → validate → critique → advisor → finalize`, plus the three
+escape hatches `repair`, `clarify`, `reject`), a bounded repair loop, and a
+human-approval interrupt. The full diagram lives in
+[`docs/graph.mmd`](./docs/graph.mmd) and is regenerated from the actual compiled
+graph.
 
 ```
 operator command + area + drone state
@@ -50,10 +77,12 @@ operator command + area + drone state
 ┌─────────────────── compile graph (LangGraph StateGraph) ───────────────────┐
 │                                                                             │
 │   intake ──► plan ──► validate ──► critique ──► advisor ──► finalize ──► END│
-│     │         ▲          │  │                                    (interrupt)│
-│     │         │          │  └──► clarify ──► finalize                       │
-│     │         │          └──────► repair ──► (cap=3) ──► reject ──► finalize│
-│     └──► clarify / reject                                                   │
+│     │                    │                                     (interrupt)  │
+│     │                    ├──► repair ──► plan        (loop, cap=3)          │
+│     │                    ├──► clarify ──► finalize                          │
+│     │                    └──► reject ──► finalize    (cap exceeded /        │
+│     │                                                 unsafe / NFZ-locked)  │
+│     └──► clarify / reject ──► finalize    (ambiguous command / no clearance)│
 │                                                                             │
 └──────────────────────────────────────────────────────────────────────────────┘
         │
@@ -64,7 +93,7 @@ operator command + area + drone state
 ┌────────────── inflight supervisor subgraph (DD-014) ────────────────────────┐
 │                                                                             │
 │   telemetry tick + event → assess → decide → (CONTINUE | RTB_NOW |          │
-│                                                DIVERT | REPLAN | LAND)      │
+│                                                REPLAN | EMERGENCY_LAND)     │
 │   non-CONTINUE → replan via compile graph → kernel validates → swap in-place│
 │                                                                             │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -103,32 +132,69 @@ operator command + area + drone state
 
 ---
 
+## Tech stack
+
+| Layer | Tool / library | Why it's used |
+| --- | --- | --- |
+| **Language / runtime** | Python 3.12+ | Type-hinted strict-`mypy` codebase; modern stdlib (`StrEnum`, structural pattern matching) |
+| **Dependency / venv** | [`uv`](https://github.com/astral-sh/uv) | Single tool for env, lockfile (`uv.lock`), and `uv run` — no `pip` / `poetry` / `virtualenv` |
+| **Web framework** | [FastAPI](https://fastapi.tiangolo.com/) + Uvicorn | Async HTTP + OpenAPI schema for free; WebSocket support for the live sim |
+| **Schemas / validation** | Pydantic v2 | One schema per boundary; the `MissionPlan` Pydantic model is what the LLM is constrained to and what the kernel validates |
+| **LLM orchestration** | [LangChain 1.x](https://docs.langchain.com/) + [LangGraph 1.x](https://langchain-ai.github.io/langgraph/) | `StateGraph` for the compile flow + inflight supervisor; `interrupt` for the human-approval gate; `langgraph.checkpoint.postgres` for durable interrupt state |
+| **LLM providers** | `langchain-anthropic`, `langchain-openai`, `langchain-google-genai` | Provider-agnostic — pick via `MTS_LLM_PROVIDER` env var; same `API_KEY` slot for all (see DD-002) |
+| **Database** | PostgreSQL 16 + [PostGIS](https://postgis.net/) 3.4 | Geofence containment, NFZ intersection, and airspace-deconfliction queries all run as SQL spatial joins, not Python loops |
+| **Spatial ops (in-proc)** | [Shapely](https://shapely.readthedocs.io/) 2.x | Pure-Python polygon ops in the kernel + search-pattern generators (no DB round-trip in the hot path) |
+| **DB access** | SQLAlchemy 2.x + `psycopg` v3 | Type-checked Core API; `Engine` reused across requests; PostGIS via `geoalchemy2` |
+| **Cache / idempotency** | Redis 7 | Idempotency keys on compile requests |
+| **HTTP client (LLM + weather)** | `httpx` | Async-ready; same library used by LangChain providers |
+| **Frontend** | Vanilla JS + [Leaflet](https://leafletjs.com/) + Leaflet.draw | Single-file SPA in `app/static/index.html` — no build step, no bundler, no framework. Renders the map, animates the live sim, draws areas |
+| **LLM tracing** | [LangSmith](https://smith.langchain.com/) | Per-node traversal, tool I/O, tokens, repair-loop counter — tagged with `mission_id` / `area_id` |
+| **Service tracing** | OpenTelemetry (OTLP) | FastAPI + SQLAlchemy instrumentation; one span tree per compile |
+| **Metrics** | `prometheus-client` → Prometheus → Grafana | `/metrics` endpoint scraped on a 15 s interval; Grafana dashboard auto-provisioned in compose |
+| **Containers** | Docker (multi-stage) + Docker Compose | One image (`docker-mts`) used unchanged by compose + kind; non-root user; `HEALTHCHECK` on `/healthz` |
+| **Orchestration** | Kubernetes via Helm; local dev on [kind](https://kind.sigs.k8s.io/) | Chart in `deploy/helm/mts/`; `values-kind.yaml` overrides for the local path |
+| **CI** | GitHub Actions (`.github/workflows/ci.yml`) | `ruff` lint + format check, `mypy` strict, `pytest` — all gating |
+| **Testing** | `pytest` + `pytest-asyncio` | 62 tests including the safety-core (`test_validation.py`, `test_physics.py`) |
+| **Lint / format / types** | `ruff` + `mypy` (strict, with `pydantic.mypy` plugin) | All three gates green on `main` |
+| **Evals** | LangSmith evaluation harness | `evals/dataset.jsonl` + `evals/run_evals.py`; scheduled by the Helm CronJob |
+
+---
+
 ## Endpoints
 
-| Method | Path                                       | Purpose                                               |
-| ------ | ------------------------------------------ | ----------------------------------------------------- |
-| GET    | `/healthz`                                 | Liveness                                              |
-| GET    | `/readyz`                                  | Readiness (checks Postgres)                           |
-| GET    | `/metrics`                                 | Prometheus scrape                                     |
-| POST   | `/v1/missions:compile`                     | Compile a command into a plan                         |
-| POST   | `/v1/missions:approve`                     | Approve or reject a ready plan                        |
-| POST   | `/v1/missions/{mission_id}:verify`         | Run the executor over a plan                          |
-| GET    | `/v1/missions`                             | List recent missions (history)                        |
-| GET    | `/v1/missions/{mission_id}`                | Fetch one mission's full plan                         |
-| GET    | `/v1/missions/{mission_id}/export`         | Export as `?format=kml\|gpx\|dji`                     |
-| GET    | `/v1/areas`                                | List operating areas                                  |
-| POST   | `/v1/areas`                                | Upsert an area drawn in the UI                        |
-| DELETE | `/v1/areas/{area_id}`                      | Delete an operating area                              |
-| GET    | `/v1/drones`                               | List drone profiles                                   |
-| WS     | `/ws/missions/{mission_id}/sim`            | Live telemetry stream (`?speed=N&session_id=…`)       |
-| POST   | `/v1/missions/{mission_id}/sim:inject`     | Inject in-flight event (DD-014; needs active session) |
+| Method | Path                                       | Purpose                                                            |
+| ------ | ------------------------------------------ | ------------------------------------------------------------------ |
+| GET    | `/healthz`                                 | Liveness                                                           |
+| GET    | `/readyz`                                  | Readiness (checks Postgres)                                        |
+| GET    | `/metrics`                                 | Prometheus scrape                                                  |
+| POST   | `/v1/missions:compile`                     | Compile a command into a plan                                      |
+| POST   | `/v1/missions:approve`                     | Approve or reject a ready plan                                     |
+| POST   | `/v1/missions/{mission_id}:verify`         | Run the executor over an approved plan                             |
+| POST   | `/v1/missions/{mission_id}:chat`           | Follow-up Q&A about a compiled plan (per-mission chat, DD-015)     |
+| GET    | `/v1/missions`                             | List recent missions (history)                                     |
+| GET    | `/v1/missions/{mission_id}`                | Fetch one mission's full plan + repair-draft timeline              |
+| GET    | `/v1/missions/{mission_id}/export`         | Export as `?format=kml\|gpx\|dji`                                  |
+| GET    | `/v1/areas`                                | List operating areas                                               |
+| POST   | `/v1/areas`                                | Upsert an area drawn in the UI                                     |
+| POST   | `/v1/areas:research`                       | LLM-assisted area research (ceiling, NFZ hints) — DD-007           |
+| DELETE | `/v1/areas/{area_id}`                      | Delete an operating area                                           |
+| GET    | `/v1/drones`                               | List drone profiles                                                |
+| POST   | `/v1/drones`                               | Upsert an operator-authored drone profile — DD-006                 |
+| WS     | `/ws/missions/{mission_id}/sim`            | Live telemetry stream (`?speed=N&session_id=…`)                    |
+| POST   | `/v1/missions/{mission_id}/sim:inject`     | Inject in-flight event (DD-014; needs active session)              |
 
 ---
 
 ## Feature index
 
-Each feature has a numbered section in [`docs/DESIGN_DECISIONS.md`](./docs/DESIGN_DECISIONS.md)
-with the *why* and the files it owns.
+The numbering in this table tracks `§1`–`§10` in
+[`docs/DESIGN_DECISIONS.md`](./docs/DESIGN_DECISIONS.md), then jumps to `#14`
+and `#15` because numbers 11–13 are taken by **design decisions** (`DD-011`
+local kind cluster, `DD-012` MCP servers in the dev workflow, `DD-013`
+`est_battery_pct` semantics) — those are infrastructure / semantic choices
+without a user-facing feature surface. DD-006 (drone profile editor) and
+DD-007 (LLM area research) are also documented in `DESIGN_DECISIONS.md` and
+each backs a real endpoint listed above.
 
 | #  | Feature                          | What it does                                                                                       |
 | -- | -------------------------------- | -------------------------------------------------------------------------------------------------- |
@@ -166,21 +232,27 @@ Adding a constraint? Update `app/validation/kernel.py` AND its test in
 
 ## Local development
 
+This is the host-side workflow (editing the code, running tests / lint / mypy).
+The demo path in TL;DR doesn't need any of this.
+
 ```sh
-# 1. install
+# 1. install host-side deps (creates .venv via uv)
 make install
 
 # 2. start stack + seed + sample compile
-cp .env.example .env    # fill API_KEY at minimum
+cp .env.example .env    # fill API_KEY=… (see Prerequisites)
 make demo
 
 # 3. iterate
-make test               # pytest -q
+make test               # pytest -q (62 tests)
 make lint               # ruff check + format check
+make typecheck          # mypy strict
 make logs               # tail mts container logs
 make compile-sample     # POST a sample mission
+make down               # stop the stack (preserves Postgres volume)
+make clean              # stop + remove volumes (full reset)
 
-# 4. evals
+# 4. evals — needs LANGSMITH_API_KEY in .env
 make evals
 ```
 
@@ -200,13 +272,22 @@ End-to-end local cluster — Postgres + Redis + MTS + probes + Helm chart. See
 rationale behind each step.
 
 ```sh
-brew install helm kind   # one-time
+brew install helm kind   # one-time (Linux: use the official installers instead)
+
+# kind-up loads `docker-mts:latest` into the cluster, so the image must exist
+# first. `make up` (or `make demo`) builds it once via compose; after that you
+# can switch freely between compose and kind.
+make up                  # builds docker-mts:latest; safe to `make down` right after
 make kind-up             # creates cluster, loads image, applies postgres+redis, helm installs
 kubectl exec deploy/mts -- python -m scripts.seed_db
 kubectl port-forward svc/mts 8001:80
 # → http://localhost:8001
 make kind-down           # tear down
 ```
+
+> **Iterating?** `helm upgrade` on an unchanged image / ConfigMap won't roll
+> the pods. After rebuilding the image (`make up`), run `make kind-up` again
+> followed by `kubectl rollout restart deploy/mts` to pick up the new code.
 
 ### Why these chart choices
 
