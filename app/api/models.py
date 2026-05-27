@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from app.schemas.plan import MissionPlan
@@ -33,7 +35,7 @@ class CompileRequest(BaseModel):
     # Chat-style clarification thread (DD-005). When the prior compile returned
     # NEEDS_CLARIFICATION, the UI sends the prior turns so the planner sees the
     # full conversation, not just the latest follow-up.
-    conversation_history: list[dict] = Field(
+    conversation_history: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Prior {role, content} turns from this clarification thread.",
     )
@@ -50,7 +52,7 @@ class DroneUpsertRequest(BaseModel):
     cruise_power_w: float = Field(..., gt=0)
     hover_power_w: float = Field(..., gt=0)
     description: str = ""
-    sensors: list[dict] = Field(
+    sensors: list[dict[str, Any]] = Field(
         default_factory=lambda: [
             {
                 "name": "nadir_eo",
@@ -66,7 +68,7 @@ class DroneUpsertRequest(BaseModel):
 class AreaResearchRequest(BaseModel):
     """Polygon submitted to the LLM-research endpoint (DD-007)."""
 
-    boundary: dict = Field(..., description="GeoJSON Polygon")
+    boundary: dict[str, Any] = Field(..., description="GeoJSON Polygon")
     home_lon: float = Field(..., ge=-180.0, le=180.0)
     home_lat: float = Field(..., ge=-90.0, le=90.0)
 
@@ -74,7 +76,7 @@ class AreaResearchRequest(BaseModel):
 class AreaResearchResponse(BaseModel):
     flight_permitted: bool
     ceiling_m: float
-    suggested_nfzs: list[dict] = Field(default_factory=list)
+    suggested_nfzs: list[dict[str, Any]] = Field(default_factory=list)
     notes: str
 
 
@@ -139,8 +141,8 @@ class AreaUpsertRequest(BaseModel):
     """Request body for POST /v1/areas — upserts an operating area drawn in the UI."""
 
     area_id: str = Field(..., min_length=1, max_length=64)
-    boundary: dict = Field(..., description="GeoJSON Polygon")
-    nfzs: list[dict] = Field(default_factory=list, description="GeoJSON Polygons")
+    boundary: dict[str, Any] = Field(..., description="GeoJSON Polygon")
+    nfzs: list[dict[str, Any]] = Field(default_factory=list, description="GeoJSON Polygons")
     ceiling_m: float = Field(120.0, gt=0.0, le=500.0)
     home_lon: float = Field(..., ge=-180.0, le=180.0)
     home_lat: float = Field(..., ge=-90.0, le=90.0)
@@ -165,7 +167,7 @@ class SupervisorInjectRequest(BaseModel):
 
     session_id: str = Field(..., min_length=1, max_length=64)
     type: str = Field(..., description="EventType value (e.g. WIND_SPIKE)")
-    payload: dict = Field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
     note: str = Field("", max_length=256)
 
 

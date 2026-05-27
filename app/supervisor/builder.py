@@ -36,7 +36,7 @@ def build_supervisor() -> Any:
     if _compiled is not None:
         return _compiled
 
-    g: StateGraph = StateGraph(SupervisorState)
+    g: StateGraph[SupervisorState] = StateGraph(SupervisorState)
     g.add_node("assess", assess_node)
     g.add_node("decide", decide_node)
     g.add_node("replan", replan_node)

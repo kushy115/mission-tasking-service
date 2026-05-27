@@ -8,6 +8,7 @@ the field a drone covers).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 # 30m between adjacent layers — matches VERTICAL_SEP_M in deconfliction.
 MIN_VERTICAL_SEP_M = 30.0
@@ -33,7 +34,7 @@ class DroneSlot:
     sibling_bands: list[tuple[float, float]]
     drone_profile_id: str
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "index": self.index,
             "total": self.total,

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
+from typing import Any
 
 from shapely.geometry import LineString, Point, Polygon, shape
 
@@ -57,7 +58,7 @@ def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     return 2 * earth_r_m * math.asin(math.sqrt(a))
 
 
-def _remaining_path_intersects(remaining_legs: list[dict], polygon: Polygon) -> bool:
+def _remaining_path_intersects(remaining_legs: list[dict[str, Any]], polygon: Polygon) -> bool:
     """Returns True if any waypoint of the remaining plan lies inside the polygon,
     or if any segment crosses it. Lossless 2D check."""
     for leg in remaining_legs:
@@ -74,7 +75,7 @@ def _remaining_path_intersects(remaining_legs: list[dict], polygon: Polygon) -> 
 
 
 def _estimate_rtb_battery_pct(
-    current: dict,
+    current: dict[str, Any],
     home_lon: float,
     home_lat: float,
     cruise_speed_mps: float,
@@ -93,12 +94,12 @@ def _estimate_rtb_battery_pct(
 
 def decide(
     *,
-    current: dict,
-    remaining_legs: list[dict],
+    current: dict[str, Any],
+    remaining_legs: list[dict[str, Any]],
     home_lon: float,
     home_lat: float,
     pending_events: Iterable[Event],
-    drone_profile: dict,
+    drone_profile: dict[str, Any],
 ) -> tuple[SupervisorDecision, str]:
     """Pure decision function. Returns (decision, reason).
 

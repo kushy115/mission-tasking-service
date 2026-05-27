@@ -81,7 +81,7 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     MemorySaver — useful for unit tests. In-process production should wire in
     `langgraph.checkpoint.postgres.PostgresSaver` so the interrupt survives.
     """
-    g: StateGraph = StateGraph(CompileState)
+    g: StateGraph[CompileState] = StateGraph(CompileState)
 
     g.add_node("intake", intake_node)
     g.add_node("plan", plan_node)
@@ -128,4 +128,5 @@ def build_graph(checkpointer: Any | None = None) -> Any:
 def mermaid_diagram() -> str:
     """Emit the compiled graph as a Mermaid diagram for docs/graph.mmd."""
     g = build_graph()
-    return g.get_graph().draw_mermaid()
+    diagram: str = g.get_graph().draw_mermaid()
+    return diagram

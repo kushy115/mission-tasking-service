@@ -61,7 +61,7 @@ def healthz() -> dict[str, str]:
 
 
 @router.get("/v1/areas")
-def list_areas_endpoint() -> list[dict]:
+def list_areas_endpoint() -> list[dict[str, Any]]:
     """Return all operating areas with boundary + NFZs as GeoJSON. Used by the UI."""
     return list_areas(get_engine())
 
@@ -153,7 +153,7 @@ def delete_area_endpoint(area_id: str) -> dict[str, Any]:
 
 
 @router.get("/v1/drones")
-def list_drones_endpoint() -> list[dict]:
+def list_drones_endpoint() -> list[dict[str, Any]]:
     """Return all drone profiles. Used by the UI."""
     return list_drones(get_engine())
 
@@ -240,14 +240,14 @@ def research_area_endpoint(req: AreaResearchRequest) -> AreaResearchResponse:
 
 
 @router.get("/v1/missions")
-def list_missions_endpoint(limit: int = 100) -> list[dict]:
+def list_missions_endpoint(limit: int = 100) -> list[dict[str, Any]]:
     """Return recent missions (summary fields only). Used by the UI history page."""
     limit = max(1, min(int(limit), 200))
     return list_missions(get_engine(), limit=limit)
 
 
 @router.get("/v1/missions/{mission_id}")
-def get_mission_endpoint(mission_id: str) -> dict:
+def get_mission_endpoint(mission_id: str) -> dict[str, Any]:
     """Return full mission detail including the repair-draft timeline."""
     detail = load_mission_detail(get_engine(), mission_id)
     if detail is None:
@@ -273,12 +273,12 @@ def _invoke_compile_graph(
     command: str,
     area_id: str,
     clearance: str,
-    drone_state: dict,
+    drone_state: dict[str, Any],
     request_id: str | None,
     alternatives_requested: bool,
-    multi_drone_slot: dict | None = None,
-    conversation_history: list[dict] | None = None,
-) -> dict:
+    multi_drone_slot: dict[str, Any] | None = None,
+    conversation_history: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """One graph invocation for one drone. Returns the final state dict."""
     thread_id = (request_id or str(uuid.uuid4())) + (
         f"-d{multi_drone_slot['index']}" if multi_drone_slot else ""
@@ -297,7 +297,8 @@ def _invoke_compile_graph(
         "conversation_history": conversation_history or [],
     }
     with COMPILE_DURATION.time():
-        return graph.invoke(initial_state, config=config)
+        result: dict[str, Any] = graph.invoke(initial_state, config=config)
+        return result
 
 
 @router.post("/v1/missions:compile", response_model=CompileResponse)
@@ -536,7 +537,7 @@ PLAN UNDER DISCUSSION:
 {chr(10).join(advisor_lines) if advisor_lines else "(no advisor output)"}
 """
 
-    messages: list = [SystemMessage(content=system_prompt)]
+    messages: list[Any] = [SystemMessage(content=system_prompt)]
     for turn in req.history:
         if turn.role == "user":
             messages.append(HumanMessage(content=turn.content))

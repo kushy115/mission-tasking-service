@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from shapely import wkt
 from shapely.geometry import LineString, Point, Polygon, mapping, shape
@@ -141,7 +142,7 @@ def evict_lfu_area_if_needed(engine: Engine, exclude_area_id: str | None = None)
         ).first()
         if not row:
             return None
-        victim = row[0]
+        victim: str = row[0]
         conn.execute(text("DELETE FROM areas WHERE area_id = :a"), {"a": victim})
         return victim
 
@@ -166,7 +167,7 @@ def set_area_notes(engine: Engine, area_id: str, notes: str) -> None:
         )
 
 
-def upsert_area(engine: Engine, area_id: str, geojson: dict, ceiling_m: float) -> None:
+def upsert_area(engine: Engine, area_id: str, geojson: dict[str, Any], ceiling_m: float) -> None:
     """Persist an operating area + its NFZs from a GeoJSON FeatureCollection.
 
     Convention: the feature with properties.role == "boundary" is the area boundary;
@@ -176,7 +177,7 @@ def upsert_area(engine: Engine, area_id: str, geojson: dict, ceiling_m: float) -
     boundary_feat = next(
         f for f in geojson["features"] if f["properties"].get("role") == "boundary"
     )
-    boundary_poly: Polygon = shape(boundary_feat["geometry"])  # type: ignore[assignment]
+    boundary_poly: Polygon = shape(boundary_feat["geometry"])
     home = boundary_feat["properties"]["home"]
     nfz_feats = [f for f in geojson["features"] if f["properties"].get("role") == "nfz"]
 
@@ -203,7 +204,7 @@ def upsert_area(engine: Engine, area_id: str, geojson: dict, ceiling_m: float) -
         )
         conn.execute(text("DELETE FROM nfzs WHERE area_id = :aid"), {"aid": area_id})
         for f in nfz_feats:
-            poly: Polygon = shape(f["geometry"])  # type: ignore[assignment]
+            poly: Polygon = shape(f["geometry"])
             conn.execute(
                 text("INSERT INTO nfzs(area_id, geom) VALUES (:aid, ST_GeomFromText(:wkt, 4326))"),
                 {"aid": area_id, "wkt": poly.wkt},
@@ -229,7 +230,7 @@ def delete_area(engine: Engine, area_id: str) -> bool:
     return bool(res.rowcount)
 
 
-def upsert_drone(engine: Engine, profile_id: str, profile_dict: dict) -> None:
+def upsert_drone(engine: Engine, profile_id: str, profile_dict: dict[str, Any]) -> None:
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -278,7 +279,7 @@ def load_drone_profile(engine: Engine, profile_id: str) -> DroneProfile:
     return _profile_from_dict(profile_id, raw)
 
 
-def _profile_from_dict(profile_id: str, raw: dict) -> DroneProfile:
+def _profile_from_dict(profile_id: str, raw: dict[str, Any]) -> DroneProfile:
     sensors = tuple(
         SensorSpec(
             name=s["name"],
@@ -303,10 +304,10 @@ def _profile_from_dict(profile_id: str, raw: dict) -> DroneProfile:
 
 def save_mission(
     engine: Engine,
-    plan_dict: dict,
+    plan_dict: dict[str, Any],
     command: str = "",
     drone_profile_id: str = "",
-    repair_drafts: list[dict] | None = None,
+    repair_drafts: list[dict[str, Any]] | None = None,
 ) -> None:
     """Persist a final plan plus history metadata.
 
@@ -339,7 +340,7 @@ def save_mission(
         )
 
 
-def list_missions(engine: Engine, limit: int = 100) -> list[dict]:
+def list_missions(engine: Engine, limit: int = 100) -> list[dict[str, Any]]:
     """Return the N most-recent missions with summary fields. Used by the UI history."""
     with engine.connect() as conn:
         rows = conn.execute(
@@ -377,7 +378,7 @@ def list_missions(engine: Engine, limit: int = 100) -> list[dict]:
     ]
 
 
-def load_mission_detail(engine: Engine, mission_id: str) -> dict | None:
+def load_mission_detail(engine: Engine, mission_id: str) -> dict[str, Any] | None:
     """Full mission record: final plan + repair-draft timeline + metadata."""
     with engine.connect() as conn:
         row = conn.execute(
@@ -415,21 +416,25 @@ def set_mission_approval(
         )
 
 
-def load_mission(engine: Engine, mission_id: str) -> dict | None:
+def load_mission(engine: Engine, mission_id: str) -> dict[str, Any] | None:
     with engine.connect() as conn:
         row = conn.execute(
             text("SELECT plan FROM missions WHERE mission_id = :m"), {"m": mission_id}
         ).first()
-    return row[0] if row else None
+    if not row:
+        return None
+    result: dict[str, Any] = row[0]
+    return result
 
 
-def geojson_from_polygon(poly: Polygon) -> dict:
-    return mapping(poly)
+def geojson_from_polygon(poly: Polygon) -> dict[str, Any]:
+    result: dict[str, Any] = mapping(poly)
+    return result
 
 
-def list_areas(engine: Engine) -> list[dict]:
+def list_areas(engine: Engine) -> list[dict[str, Any]]:
     """All areas with boundary + NFZs as GeoJSON. Used by the UI map."""
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     with engine.connect() as conn:
         rows = conn.execute(
             text(
@@ -460,7 +465,7 @@ def list_areas(engine: Engine) -> list[dict]:
     return out
 
 
-def list_drones(engine: Engine) -> list[dict]:
+def list_drones(engine: Engine) -> list[dict[str, Any]]:
     """All drone profiles. Used by the UI dropdown."""
     with engine.connect() as conn:
         rows = conn.execute(

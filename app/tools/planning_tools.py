@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import random
-from typing import Annotated
+from typing import Annotated, Any
 
 from langchain_core.tools import tool
 from shapely.geometry import LineString
@@ -40,7 +40,7 @@ def _get_engine() -> Engine:
 
 
 @tool
-def get_geofence(area_id: Annotated[str, "Operating area ID"]) -> dict:
+def get_geofence(area_id: Annotated[str, "Operating area ID"]) -> dict[str, Any]:
     """Return the geofence for an operating area: outer boundary polygon, all
     no-fly-zone polygons, altitude ceiling, and home/base point.
 
@@ -65,7 +65,7 @@ def check_path_clear(
         list[list[float]],
         "List of [lon, lat] pairs describing the proposed flight path.",
     ],
-) -> dict:
+) -> dict[str, Any]:
     """Check whether a proposed flight path intersects any no-fly-zone in the
     operating area. Returns clear/blocked and, if blocked, which NFZ indices.
     Use after generating geometry and BEFORE finalizing a plan.
@@ -86,10 +86,10 @@ def check_path_clear(
 def estimate_battery(
     drone_profile_id: Annotated[str, "Drone profile ID"],
     legs: Annotated[
-        list[dict],
+        list[dict[str, Any]],
         "List of leg dicts matching MissionLeg schema (leg_type, geometry, sensor_mode, ...).",
     ],
-) -> dict:
+) -> dict[str, Any]:
     """Estimate total flight time and battery consumption for a candidate set
     of legs using the deterministic physics model. Returns total_duration_s,
     total_battery_pct, and per-leg breakdown.
@@ -118,7 +118,7 @@ def get_sensor_coverage(
     drone_profile_id: Annotated[str, "Drone profile ID"],
     sensor_mode: Annotated[str, "EO or IR"],
     altitude_m: Annotated[float, "AGL altitude in meters"],
-) -> dict:
+) -> dict[str, Any]:
     """Return ground swath width (m) and ground resolution (m/px) for the named
     sensor at the given altitude. Use this to pick a search-pattern track
     spacing such that swath >= spacing (no coverage gap).
@@ -144,7 +144,7 @@ def lookup_search_pattern(
     spacing_m: Annotated[float, "Lawnmower track spacing in meters."] = 0.0,
     radius_m: Annotated[float, "Sector / expanding_square: radius or initial leg in meters."] = 0.0,
     legs_count: Annotated[int, "Expanding-square legs."] = 8,
-) -> dict:
+) -> dict[str, Any]:
     """Generate the waypoint geometry for a named search pattern. Returns a
     list of {lat, lon, alt_m}. Use this so you don't have to invent geometry
     by hand — the generator is guaranteed parametric and consistent.
@@ -165,7 +165,7 @@ def lookup_search_pattern(
 
 
 @tool
-def get_weather(area_id: Annotated[str, "Operating area ID"]) -> dict:
+def get_weather(area_id: Annotated[str, "Operating area ID"]) -> dict[str, Any]:
     """Return current weather snapshot for the area. Deterministic synthetic
     provider keyed by (area_id, seed) — same area always returns the same value
     across a run, so evals are reproducible.

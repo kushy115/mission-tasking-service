@@ -7,12 +7,12 @@ file header so an operator does not assume MSL and fly into terrain.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from xml.sax.saxutils import escape as xml_escape
 
-from app.schemas.plan import MissionPlan
+from app.schemas.plan import MissionPlan, Waypoint
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,7 @@ EXPORT_FORMATS: dict[str, ExportSpec] = {
 }
 
 
-def _iter_waypoints(plan: MissionPlan):
+def _iter_waypoints(plan: MissionPlan) -> Iterator[tuple[int, str, int, Waypoint]]:
     """Yield (leg_idx, leg_type_str, wp_idx_in_plan, waypoint) tuples."""
     global_idx = 0
     for li, leg in enumerate(plan.legs):

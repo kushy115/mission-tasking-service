@@ -260,8 +260,8 @@ def _strip_to_json(text: str) -> str:
     leading prose or ```json fences."""
     s = text.strip()
     if s.startswith("```"):
-        s = s.split("```", 2)
-        s = s[1] if len(s) >= 2 else text
+        parts = s.split("```", 2)
+        s = parts[1] if len(parts) >= 2 else text
         if s.lstrip().startswith("json"):
             s = s.lstrip()[4:]
     start = s.find("{")
@@ -376,7 +376,7 @@ def plan_node(state: CompileState) -> dict[str, Any]:
     # Alternatives mode: payload is {"plans": [...], "primary_idx": N}.
     # We pick the primary as the draft_plan; the rest are stashed for the
     # validate node to filter and stamp on the final response.
-    raw_alternatives: list[dict] = []
+    raw_alternatives: list[dict[str, Any]] = []
     if isinstance(payload, dict) and "plans" in payload and isinstance(payload["plans"], list):
         plans = payload["plans"]
         if not plans:
@@ -420,7 +420,7 @@ def plan_node(state: CompileState) -> dict[str, Any]:
         drone_id = state["drone_state"]["drone_profile_id"]
         profile = load_drone_profile(get_engine(), drone_id)
 
-        def _pick_sensor(mode_str: str | None):
+        def _pick_sensor(mode_str: str | None) -> Any:
             target = (mode_str or "EO").upper()
             for s in profile.sensors:
                 if s.mode.value == target:
@@ -461,7 +461,7 @@ def plan_node(state: CompileState) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001 — densification is best-effort
         log.warning("search-pattern densification skipped: %s", e)
 
-    out = {"draft_plan": structured.model_dump()}
+    out: dict[str, Any] = {"draft_plan": structured.model_dump()}
     if raw_alternatives:
         # Stash raw alternative dicts; validate_node will filter and convert.
         out["alternatives"] = raw_alternatives
@@ -539,7 +539,7 @@ def validate_node(state: CompileState) -> dict[str, Any]:
     # are dropped silently (operator never sees an unsafe "choice"). Repair
     # loop applies only to the primary plan. See DESIGN_DECISIONS §7.
     raw_alts = state.get("alternatives") or []
-    accepted_alts: list[dict] = []
+    accepted_alts: list[dict[str, Any]] = []
     for i, raw in enumerate(raw_alts):
         try:
             raw.setdefault("mission_id", f"{plan.mission_id}-alt{i + 1}")

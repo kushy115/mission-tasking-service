@@ -10,7 +10,7 @@ import logging
 import random
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 
@@ -141,11 +141,11 @@ WEATHER_PROVIDERS: dict[str, type] = {
 # falls inside the same hour bucket twice within 10 min, we serve from cache;
 # beyond 10 min we re-validate. Open-Meteo's published quota is ~10k req/day per
 # IP and we want to stay well under it.
-_CACHE: dict[tuple, tuple[float, WeatherObservation]] = {}
+_CACHE: dict[tuple[Any, ...], tuple[float, WeatherObservation]] = {}
 _TTL_S = 600.0
 
 
-def _cache_key(lat: float, lon: float, provider_name: str) -> tuple:
+def _cache_key(lat: float, lon: float, provider_name: str) -> tuple[Any, ...]:
     return (provider_name, round(lat, 2), round(lon, 2), int(time.time() // 3600))
 
 
@@ -157,7 +157,8 @@ def _build_provider(name: str) -> WeatherProvider:
         return SyntheticWeather(settings.weather_seed)
     if cls is SyntheticWeather:
         return SyntheticWeather(settings.weather_seed)
-    return cls()
+    provider: WeatherProvider = cls()
+    return provider
 
 
 def get_weather_for_area(lat: float, lon: float) -> WeatherObservation:

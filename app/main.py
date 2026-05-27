@@ -13,6 +13,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
@@ -58,9 +59,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        cp_ctx = getattr(app.state, "_checkpoint_ctx", None)
-        if cp_ctx is not None:
-            cp_ctx.__exit__(None, None, None)
+        cp_ctx_close: Any = getattr(app.state, "_checkpoint_ctx", None)
+        if cp_ctx_close is not None:
+            cp_ctx_close.__exit__(None, None, None)
 
 
 def create_app() -> FastAPI:
@@ -83,7 +84,7 @@ def create_app() -> FastAPI:
         mission_id: str,
         speed: float = 10.0,
         session_id: str = "",
-    ):
+    ) -> None:
         """Live telemetry stream for a saved mission.
 
         Telemetry path is DD-§10. When `session_id` is supplied (the UI does so
@@ -133,9 +134,9 @@ def create_app() -> FastAPI:
                         return
             else:
                 # Legacy unsupervised path (back-compat for callers w/o session_id).
-                async for frame in telemetry_stream(plan, profile, geo, speed=speed):
+                async for tframe in telemetry_stream(plan, profile, geo, speed=speed):
                     try:
-                        await websocket.send_json({"kind": "telemetry", **frame.to_dict()})
+                        await websocket.send_json({"kind": "telemetry", **tframe.to_dict()})
                     except Exception:  # noqa: BLE001
                         log.info("ws sim stream send failed; closing")
                         return

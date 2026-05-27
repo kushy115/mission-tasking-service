@@ -48,4 +48,4 @@ class CompileState(TypedDict, total=False):
     # NEEDS_CLARIFICATION. Each entry is {role: "user"|"assistant", content: str}.
     # See docs/DESIGN_DECISIONS.md#DD-005.
     conversation_history: list[dict[str, str]]
-    messages: Annotated[list, add_messages]
+    messages: Annotated[list[Any], add_messages]

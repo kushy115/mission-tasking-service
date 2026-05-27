@@ -15,6 +15,7 @@ import logging
 import math
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
+from typing import Any
 
 from shapely.geometry import Point
 
@@ -45,7 +46,7 @@ class TelemetryFrame:
     status: str  # "flying" | "done" | "aborted"
     detail: str = ""  # human reason on abort
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 

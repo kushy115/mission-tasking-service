@@ -10,7 +10,7 @@ import time
 
 from fastapi import FastAPI, Request
 from prometheus_client import Counter, Histogram
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
 # ---- compile-level (the user-visible workflow) ------------------------------
@@ -89,11 +89,12 @@ HTTP_DURATION = Histogram(
 
 
 class _PromMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         start = time.perf_counter()
         response: Response = await call_next(request)
         dur = time.perf_counter() - start
-        path = request.scope.get("route").path if request.scope.get("route") else request.url.path
+        route = request.scope.get("route")
+        path: str = route.path if route is not None else request.url.path
         HTTP_REQUESTS.labels(request.method, path, str(response.status_code)).inc()
         HTTP_DURATION.labels(request.method, path).observe(dur)
         return response

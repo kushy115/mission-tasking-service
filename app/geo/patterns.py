@@ -8,8 +8,12 @@ the named pattern. Pure functions — no LLM, no network. Used by the
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 from app.schemas.plan import Waypoint
+
+if TYPE_CHECKING:
+    from shapely.geometry import Polygon
 
 METERS_PER_DEG_LAT = 111_320.0
 
@@ -56,7 +60,7 @@ def lawnmower(
 
 
 def lawnmower_fit_to_boundary(
-    boundary: Polygon,  # noqa: F821 — shapely Polygon, deferred import
+    boundary: Polygon,
     altitude_m: float,
     swath_m: float,
     spacing_factor: float = 0.85,

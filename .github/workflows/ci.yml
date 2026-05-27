@@ -38,9 +38,8 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Mypy
-        # Strict typing is configured in pyproject.toml; non-blocking until the
-        # codebase is fully annotated.
-        run: uv run mypy app || true
+        # Strict typing is configured in pyproject.toml; this step must stay green.
+        run: uv run mypy app
 
       - name: Pytest
         # Unit + graph + safety-core tests. The full eval suite is run by the

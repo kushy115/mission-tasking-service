@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from shapely.geometry import LineString, MultiLineString
 from sqlalchemy import text
@@ -99,7 +100,7 @@ def find_conflicts(
     buffer_deg = _approx_lateral_buffer_deg(centroid_lat)
     buffered_geom = geom.buffer(buffer_deg)
 
-    rows = []
+    rows: list[Any] = []
     with engine.connect() as conn:
         # Active = approved=true AND created within the window AND same area.
         sql = text(
@@ -113,15 +114,17 @@ def find_conflicts(
             """
         )
         try:
-            rows = conn.execute(
-                sql,
-                {
-                    "area": plan.area_id,
-                    "ready": MissionStatus.READY_FOR_APPROVAL.value,
-                    "win": str(active_window_s),
-                    "self_id": self_mission_id or "",
-                },
-            ).all()
+            rows = list(
+                conn.execute(
+                    sql,
+                    {
+                        "area": plan.area_id,
+                        "ready": MissionStatus.READY_FOR_APPROVAL.value,
+                        "win": str(active_window_s),
+                        "self_id": self_mission_id or "",
+                    },
+                ).all()
+            )
         except Exception as e:  # noqa: BLE001
             # If the DB is unreachable we conservatively report no conflicts
             # rather than failing the compile; airspace check becomes a no-op.
