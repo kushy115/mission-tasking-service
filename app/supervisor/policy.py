@@ -42,10 +42,6 @@ from app.supervisor.state import SupervisorDecision
 # RTB immediately.
 _SUPERVISOR_RESERVE_MARGIN_PCT: float = 15.0
 
-# Minimum altitude AGL the supervisor will hold during EMERGENCY_LAND
-# descent. Real hardware lands; the simulator parks here.
-_EMERGENCY_LAND_ALT_M: float = 10.0
-
 
 def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     """Great-circle distance (meters) — duplicated locally to avoid importing

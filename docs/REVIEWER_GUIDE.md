@@ -44,11 +44,6 @@ quick map up front:
   `langgraph.checkpoint.postgres.PostgresSaver`, so the pause survives a
   service restart. Pods can scale horizontally because the checkpoint state
   is in Postgres, not in-process.
-- **`@tool` declarations exist in `app/tools/planning_tools.py` but are not
-  bound to anything.** They're a leftover from the original tool-calling
-  agent design (DD-001) and are currently dead code. Keeping them in-tree
-  is a deliberate choice: the supervisor or a future critique pass could
-  bind them via `llm.bind_tools(PLANNING_TOOLS)`.
 
 If you want to point at "the chain," it's the `StateGraph` itself. Sequential
 edges are sequential composition; conditional edges are routing; the
@@ -158,12 +153,6 @@ each one, so the reasoning is laid out here instead of making you dig.
   prompt. A single `llm.invoke()` with a hand-composed message list is
   shorter, easier to debug, and shows up cleanly in LangSmith as one span
   per attempt.
-
-- **"Why is `app/tools/planning_tools.py` in the repo if nothing uses it?"**
-  Honest answer: it's a leftover from the abandoned tool-calling design.
-  It's kept around because the supervisor (or a future critique pass) could
-  bind it without re-writing the tool surface. If that doesn't happen, the
-  file should be deleted.
 
 - **"The flight-physics model isn't aerospace-grade."** Correct, and the
   module docstring says so. It is principled, deterministic, and documented.

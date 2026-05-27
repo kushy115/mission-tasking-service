@@ -791,7 +791,7 @@ reject anyway. No downstream code assumed the bound for arithmetic.
 `app/api/routes.py` (`POST /v1/missions/{id}/sim:inject`),
 `app/main.py` (WS handler routes through `live_mission_session`),
 `app/static/index.html` (inject menu, supervisor banner, cyan replan
-overlay), `tests/test_supervisor.py`, `evals/dataset_supervisor.jsonl`.
+overlay), `tests/test_supervisor.py`.
 
 ### What
 A second decision graph runs alongside the existing live-sim WebSocket
@@ -943,7 +943,5 @@ service goes from "plan once" to "plan, fly, react, re-plan."
 - `app/static/index.html` — inject menu, supervisor banner, cyan replan
   polyline overlay.
 - `tests/test_supervisor.py` — 13 policy tests, all green.
-- `evals/dataset_supervisor.jsonl` — 10 scenario rows (current telemetry
-  + events → expected decision), ready to run through the policy.
 
 
