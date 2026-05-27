@@ -116,7 +116,7 @@ def intake_node(state: CompileState) -> dict[str, Any]:  # noqa: D401
 #
 # The `plan` node uses a DIRECT LLM call (one llm.invoke per attempt), NOT a
 # LangChain `create_agent` tool-calling agent. This is a deliberate change from
-# the original CLAUDE.md design. Why we moved away from the agent:
+# the original design. Why we moved away from the agent:
 #
 #   - The agent loop (create_agent + tools + response_format=MissionPlan)
 #     made 5+ LLM calls per compile request: one per tool decision, plus a

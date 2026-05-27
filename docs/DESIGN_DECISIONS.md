@@ -1,16 +1,27 @@
 # Design Decisions
 
-This document records the major design choices made for each non-trivial feature
-of the Mission Tasking Service. Read this first before changing anything in the
-files referenced from each section.
+This document records the major design choices made for each non-trivial
+feature of the Mission Tasking Service. Read this before changing anything in
+the files referenced from each section.
 
 ## How to read this doc
 
-Each section is dated and tagged with the **files it owns**. If you change one
-of those files, update the section. If you add a new feature, add a new
-section — short, opinionated, links to code, no fluff.
+There are two sections:
+
+1. **Feature catalog** (numbered `1.` through `10.`) — one entry per
+   user-facing feature. Each captures *what* the feature is, *why* it was
+   built, and *what was decided* in the implementation.
+2. **Cross-cutting decisions** (`DD-001` through `DD-014`) — one entry per
+   design call that spans multiple features. Read these for the engineering
+   trade-offs (planner architecture, checkpointing, k8s shape, etc.).
+
+Each section is tagged with the files it owns. If you change one of those
+files, update the section. New features get a new entry — short, opinionated,
+links to code, no fluff.
 
 ---
+
+# Feature catalog
 
 ## 1. Mission History Browser
 
@@ -401,8 +412,8 @@ are preserved here for continuity.
 
 **Decision.** The planning step is implemented as a single `llm.invoke()` per
 attempt, with the geo context inlined into the system prompt. We do **not**
-use `langchain.agents.create_agent` + planning tools, even though `CLAUDE.md`
-originally specified an agent.
+use `langchain.agents.create_agent` + planning tools, even though the original
+design specified an agent.
 
 **Why.** The agent setup made 5+ LLM calls per compile (one per tool decision
 plus a final structured-output pass). On Gemini's free tier that exhausted
@@ -549,7 +560,7 @@ the ceiling field and draws the suggested NFZs as editable polygons. The
 operator can delete or modify any of them before saving.
 
 **Why.** Operators don't have FAA charts or terrain DEMs at their fingertips,
-and we explicitly forbid proprietary airspace data (per CLAUDE.md). The LLM
+and the project's hard constraints forbid proprietary airspace data. The LLM
 has plausible knowledge about famous landmarks, urban areas, airports, etc.
 from training data — that's good enough for an advisory hint that beats
 "start from a blank polygon". The deterministic safety kernel still
@@ -656,8 +667,8 @@ kubectl exec deploy/mts -- python -m scripts.seed_db
 kubectl port-forward svc/mts 8001:80
 ```
 
-**Why.** The Helm chart was authored per `CLAUDE.md §13` but had never been
-exercised end-to-end. Standing it up against `kind` gives us the production
+**Why.** The Helm chart was authored alongside the rest of the deployment
+manifests but had never been exercised end-to-end. Standing it up against `kind` gives us the production
 deployment story (Deployment + Service + ConfigMap + Secret + probes + HPA
 template + PDB + CronJob) on a single laptop, without paying for cloud
 infrastructure. The chart's production defaults (replicas=3, HPA on

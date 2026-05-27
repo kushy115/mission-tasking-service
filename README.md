@@ -134,4 +134,3 @@ eval CronJob, etc.) is in DD-011.
 - [`docs/SAFETY_MODEL.md`](./docs/SAFETY_MODEL.md) — what the kernel enforces
 - [`docs/observability.md`](./docs/observability.md) — what every metric means and what its healthy range looks like
 - [`docs/graph.mmd`](./docs/graph.mmd) — full LangGraph diagram
-- [`CLAUDE.md`](./CLAUDE.md) — original product brief
