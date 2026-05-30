@@ -202,5 +202,3 @@ class AreaUpsertResponse(BaseModel):
     home_bases: list[tuple[float, float]] = Field(default_factory=list)
     nfz_count: int
     home_was_snapped: bool
-
-

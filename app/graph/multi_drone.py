@@ -32,10 +32,7 @@ def _lonlat_distance_m(a: tuple[float, float], b: tuple[float, float]) -> float:
     dlon = math.radians(lon2 - lon1)
     rlat1 = math.radians(lat1)
     rlat2 = math.radians(lat2)
-    h = (
-        math.sin(dlat / 2.0) ** 2
-        + math.cos(rlat1) * math.cos(rlat2) * math.sin(dlon / 2.0) ** 2
-    )
+    h = math.sin(dlat / 2.0) ** 2 + math.cos(rlat1) * math.cos(rlat2) * math.sin(dlon / 2.0) ** 2
     return 2.0 * 6_371_000.0 * math.asin(math.sqrt(h))
 
 

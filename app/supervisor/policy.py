@@ -151,7 +151,10 @@ def decide(
                 return SupervisorDecision.CONTINUE, "nfz_popup polygon empty"
             if poly.covers(Point(current["lon"], current["lat"])):
                 # Drone is already inside it — can't detour out cleanly; bail home.
-                return SupervisorDecision.RTB_NOW, "restricted airspace activated over current position"
+                return (
+                    SupervisorDecision.RTB_NOW,
+                    "restricted airspace activated over current position",
+                )
             if _remaining_path_intersects(remaining_legs, poly):
                 return (
                     SupervisorDecision.REPLAN_FROM_HERE,

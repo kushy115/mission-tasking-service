@@ -118,9 +118,7 @@ def init_schema(engine: Engine) -> None:
 AREA_LFU_CAP = 10
 
 
-def _normalize_home_bases(
-    raw: Any, fallback_lon: float, fallback_lat: float
-) -> list[list[float]]:
+def _normalize_home_bases(raw: Any, fallback_lon: float, fallback_lat: float) -> list[list[float]]:
     """Return a non-empty list of [lon, lat] bases, preserving old rows."""
     bases: list[list[float]] = []
     if isinstance(raw, str):
@@ -481,7 +479,18 @@ def list_areas(engine: Engine) -> list[dict[str, Any]]:
                 "FROM areas ORDER BY protected DESC, access_count DESC, area_id"
             )
         ).all()
-        for area_id, bnd_json, ceiling_m, hlon, hlat, home_bases_raw, count, last_acc, prot, notes in rows:
+        for (
+            area_id,
+            bnd_json,
+            ceiling_m,
+            hlon,
+            hlat,
+            home_bases_raw,
+            count,
+            last_acc,
+            prot,
+            notes,
+        ) in rows:
             nfz_rows = conn.execute(
                 text("SELECT ST_AsGeoJSON(geom) FROM nfzs WHERE area_id = :a"),
                 {"a": area_id},

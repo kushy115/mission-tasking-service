@@ -83,8 +83,16 @@ def pick_fleet(
     coverage_intent = any(
         k in cmd_lc
         for k in (
-            "search", "sweep", "cover", "entire", "whole", "all of", "complete",
-            "every", "as much", "patrol",
+            "search",
+            "sweep",
+            "cover",
+            "entire",
+            "whole",
+            "all of",
+            "complete",
+            "every",
+            "as much",
+            "patrol",
         )
     )
     # An explicit multi-drone ask forces a fleet (>=2) regardless of the coverage
@@ -132,7 +140,11 @@ def pick_fleet(
 
     log.info(
         "auto-fleet: %d× %s (bias=%.2f, area=%.3f km², min_feasible=%d)",
-        n, pid, bias, area_km2, min_feasible,
+        n,
+        pid,
+        bias,
+        area_km2,
+        min_feasible,
     )
     return {
         "drone_profile_ids": [pid] * n,
@@ -143,5 +155,3 @@ def pick_fleet(
             f"speed bias ({bias:.2f}) raised it to {n}.{capped_note}"
         ),
     }
-
-

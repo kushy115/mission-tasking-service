@@ -106,11 +106,11 @@ def _route_through_flyable(
     # De-dup nodes (buffers can share vertices).
     seen: set[tuple[float, float]] = set()
     uniq: list[tuple[float, float]] = []
-    for n in nodes:
-        key = (round(n[0], 9), round(n[1], 9))
+    for node in nodes:
+        key = (round(node[0], 9), round(node[1], 9))
         if key not in seen:
             seen.add(key)
-            uniq.append(n)
+            uniq.append(node)
     nodes = uniq
 
     def dist(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -346,7 +346,7 @@ def band_subregion(boundary: Polygon, index: int, total: int) -> Polygon | None:
                     return lb
                 frac = (target - aa) / (ab - aa)
                 return la + (lb - la) * frac
-        return maxy
+        return float(maxy)
 
     lo_lat = _lat_at_area(total_area * index / total)
     hi_lat = _lat_at_area(total_area * (index + 1) / total)

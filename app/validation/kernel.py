@@ -165,9 +165,7 @@ def _sensor_coverage_ok(plan: MissionPlan, profile: DroneProfile) -> tuple[bool,
                 rows.append(lat)
         if len(rows) < 2:
             continue
-        gaps_m = sorted(
-            (rows[i + 1] - rows[i]) * METERS_PER_DEG_LAT for i in range(len(rows) - 1)
-        )
+        gaps_m = sorted((rows[i + 1] - rows[i]) * METERS_PER_DEG_LAT for i in range(len(rows) - 1))
         mid = len(gaps_m) // 2
         median_spacing = (
             gaps_m[mid] if len(gaps_m) % 2 == 1 else (gaps_m[mid - 1] + gaps_m[mid]) / 2.0

@@ -104,7 +104,9 @@ def upsert_area_endpoint(req: AreaUpsertRequest) -> AreaUpsertResponse:
     home_was_snapped = False
     for i, (lon, lat) in enumerate(requested_bases):
         if not (-180.0 <= lon <= 180.0 and -90.0 <= lat <= 90.0):
-            raise HTTPException(status_code=400, detail=f"home_bases[{i}] is outside lon/lat bounds")
+            raise HTTPException(
+                status_code=400, detail=f"home_bases[{i}] is outside lon/lat bounds"
+            )
         home_pt = Point(lon, lat)
         if boundary.exterior.distance(home_pt) >= 1e-9:
             home_was_snapped = True
@@ -400,15 +402,17 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
     if drone_ids and len(drone_ids) >= 1:
         from app.geo.store import load_geo_context
         from app.graph.multi_drone import assign_slots, nearest_home_base
+        from app.validation.kernel import GeoContext
 
         # Ceiling-aware altitude layering: a low area ceiling (e.g. 50m) can't
         # fit the default 40/70/100m layers, so pass it in to compress them.
+        area_geo: GeoContext | None = None
+        _ceiling: float | None = None
         try:
-            geo = load_geo_context(get_engine(), req.area_id)
-            _ceiling = geo.altitude_ceiling_m
+            area_geo = load_geo_context(get_engine(), req.area_id)
+            _ceiling = area_geo.altitude_ceiling_m
         except Exception:  # noqa: BLE001
-            geo = None
-            _ceiling = None
+            pass
         slots = assign_slots(drone_ids, ceiling_m=_ceiling)
         group_plans: list[MissionPlan] = []
         total_repairs = 0
@@ -418,14 +422,19 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
                 "battery_pct": req.drone_state.battery_pct,
             }
             assigned_home = None
-            if geo is not None:
-                from app.geo.patterns import band_subregion
+            if area_geo is not None:
+                from app.area_geo.patterns import band_subregion
 
-                sub = band_subregion(geo.boundary, slot.index, slot.total)
-                band_shape = geo.boundary.intersection(sub) if sub is not None else geo.boundary
-                centroid = band_shape.centroid if not band_shape.is_empty else geo.boundary.centroid
+                sub = band_subregion(area_geo.boundary, slot.index, slot.total)
+                band_shape = (
+                    area_geo.boundary.intersection(sub) if sub is not None else area_geo.boundary
+                )
+                centroid = (
+                    band_shape.centroid if not band_shape.is_empty else area_geo.boundary.centroid
+                )
                 assigned_home = nearest_home_base(
-                    geo.home_bases or (geo.home_point,), (float(centroid.x), float(centroid.y))
+                    area_geo.home_bases or (area_geo.home_point,),
+                    (float(centroid.x), float(centroid.y)),
                 )
             try:
                 final = _invoke_compile_graph(

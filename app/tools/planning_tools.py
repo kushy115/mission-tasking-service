@@ -86,7 +86,7 @@ def build_planning_tools(geo: dict[str, Any], profile: DroneProfile) -> list[Bas
         return json.dumps({"clear": not problems, "violations": problems})
 
     @tool
-    def estimate_battery(legs: list[dict]) -> str:
+    def estimate_battery(legs: list[dict[str, Any]]) -> str:
         """Estimate flight time and battery for a candidate set of legs using the
         SELECTED drone's physics model — use it to confirm a plan fits before you
         finalize it. Each leg is
@@ -150,7 +150,9 @@ def build_planning_tools(geo: dict[str, Any], profile: DroneProfile) -> list[Bas
                 "altitude_m": altitude_m,
                 "sensor": sensor_mode.upper(),
                 "swath_width_m": round(swath, 1),
-                "ground_resolution_m_per_px": round(sensor_ground_resolution_m_per_px(spec, altitude_m), 4),
+                "ground_resolution_m_per_px": round(
+                    sensor_ground_resolution_m_per_px(spec, altitude_m), 4
+                ),
                 "recommended_track_spacing_m": round(swath * 0.85, 1),
             }
         )
@@ -196,4 +198,10 @@ def build_planning_tools(geo: dict[str, Any], profile: DroneProfile) -> list[Bas
         except Exception as e:  # noqa: BLE001
             return json.dumps({"error": f"could not generate pattern: {type(e).__name__}: {e}"})
 
-    return [get_geofence, check_path_clear, estimate_battery, get_sensor_coverage, lookup_search_pattern]
+    return [
+        get_geofence,
+        check_path_clear,
+        estimate_battery,
+        get_sensor_coverage,
+        lookup_search_pattern,
+    ]

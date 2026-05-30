@@ -85,12 +85,18 @@ def _direct_home_plan(
     home_wp = Waypoint(lat=home_lat, lon=home_lon, alt_m=cruise_alt)
     landing_wp = Waypoint(lat=home_lat, lon=home_lon, alt_m=0.0)
     transit = MissionLeg(
-        leg_type=LegType.TRANSIT, geometry=[cur_wp, home_wp], sensor_mode=None,
-        est_duration_s=0.0, est_battery_pct=0.0,
+        leg_type=LegType.TRANSIT,
+        geometry=[cur_wp, home_wp],
+        sensor_mode=None,
+        est_duration_s=0.0,
+        est_battery_pct=0.0,
     )
     rtb = MissionLeg(
-        leg_type=LegType.RETURN_TO_BASE, geometry=[home_wp, landing_wp], sensor_mode=None,
-        est_duration_s=0.0, est_battery_pct=0.0,
+        leg_type=LegType.RETURN_TO_BASE,
+        geometry=[home_wp, landing_wp],
+        sensor_mode=None,
+        est_duration_s=0.0,
+        est_battery_pct=0.0,
     )
     for leg in (transit, rtb):
         e = estimate_leg(leg, profile)
@@ -158,10 +164,14 @@ def replan_node(state: SupervisorState) -> dict[str, Any]:
         # Buffer the NFZ by ~20m so the reroute keeps a margin.
         import math as _m  # noqa: PLC0415
 
-        margin_deg = 20.0 * (
-            1.0 / METERS_PER_DEG_LAT
-            + 1.0 / max(METERS_PER_DEG_LAT * _m.cos(_m.radians(home_lat)), 1e-6)
-        ) / 2.0
+        margin_deg = (
+            20.0
+            * (
+                1.0 / METERS_PER_DEG_LAT
+                + 1.0 / max(METERS_PER_DEG_LAT * _m.cos(_m.radians(home_lat)), 1e-6)
+            )
+            / 2.0
+        )
         nfz_buf = nfz_poly.buffer(margin_deg)
         obstacles = [nfz_buf]
 
@@ -194,8 +204,8 @@ def replan_node(state: SupervisorState) -> dict[str, Any]:
                 est_duration_s=0.0,
                 est_battery_pct=0.0,
             )
-            e = estimate_leg(leg, profile)
-            leg.est_duration_s, leg.est_battery_pct = e.duration_s, e.battery_pct
+            energy = estimate_leg(leg, profile)
+            leg.est_duration_s, leg.est_battery_pct = energy.duration_s, energy.battery_pct
             legs.append(leg)
 
         if not legs:
@@ -210,11 +220,14 @@ def replan_node(state: SupervisorState) -> dict[str, Any]:
             rtb_geo += [Waypoint(lat=dl, lon=dn, alt_m=cruise_alt) for dn, dl in detour]
             rtb_geo += [home_wp, land_wp]
             rtb = MissionLeg(
-                leg_type=LegType.RETURN_TO_BASE, geometry=rtb_geo, sensor_mode=None,
-                est_duration_s=0.0, est_battery_pct=0.0,
+                leg_type=LegType.RETURN_TO_BASE,
+                geometry=rtb_geo,
+                sensor_mode=None,
+                est_duration_s=0.0,
+                est_battery_pct=0.0,
             )
-            e = estimate_leg(rtb, profile)
-            rtb.est_duration_s, rtb.est_battery_pct = e.duration_s, e.battery_pct
+            energy = estimate_leg(rtb, profile)
+            rtb.est_duration_s, rtb.est_battery_pct = energy.duration_s, energy.battery_pct
             legs.append(rtb)
 
         starting = float(cur.get("battery_pct") or 100.0)

@@ -374,9 +374,21 @@ def _effort_config(requested: str | None) -> tuple[str, dict[str, Any]]:
     s = get_settings()
     eff = (requested or s.default_planning_effort or "balanced").strip().lower()
     table = {
-        "fast": {"model": s.plan_model_fast or s.llm_model, "use_tools": False, "recursion_limit": 0},
-        "balanced": {"model": s.plan_model_balanced or s.llm_model, "use_tools": True, "recursion_limit": 30},
-        "thorough": {"model": s.plan_model_thorough or s.llm_model, "use_tools": True, "recursion_limit": 60},
+        "fast": {
+            "model": s.plan_model_fast or s.llm_model,
+            "use_tools": False,
+            "recursion_limit": 0,
+        },
+        "balanced": {
+            "model": s.plan_model_balanced or s.llm_model,
+            "use_tools": True,
+            "recursion_limit": 30,
+        },
+        "thorough": {
+            "model": s.plan_model_thorough or s.llm_model,
+            "use_tools": True,
+            "recursion_limit": 60,
+        },
     }
     if eff not in table:
         eff = "balanced"
@@ -441,7 +453,9 @@ def _direct_plan(
     raw_text = ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
     log.info(
         "← plan direct [%s/%s]: %d chars",
-        effort, model, len(raw_text) if isinstance(raw_text, str) else -1,
+        effort,
+        model,
+        len(raw_text) if isinstance(raw_text, str) else -1,
     )
     try:
         payload = json.loads(_strip_to_json(raw_text))
@@ -606,7 +620,9 @@ def plan_node(state: CompileState) -> dict[str, Any]:
             # without converging. Don't fail the drone (that produced an empty,
             # 0-battery "rejected" plan with no clear reason); fall through to a
             # single direct call below so this slot still gets a real plan.
-            log.warning("planning agent failed (%s); will fall back to direct call", type(e).__name__)
+            log.warning(
+                "planning agent failed (%s); will fall back to direct call", type(e).__name__
+            )
         LLM_DURATION.labels(provider, model).observe(time.perf_counter() - start)
         if result is not None:
             agent_msgs = result.get("messages", []) if isinstance(result, dict) else []
@@ -616,7 +632,10 @@ def plan_node(state: CompileState) -> dict[str, Any]:
                 LLM_CALLS_TOTAL.labels(provider, model, "ok").inc()
             log.info(
                 "← plan agent [%s/%s]: %d model turns, %d tool calls",
-                effort, model, n_ai_turns, n_tool_calls,
+                effort,
+                model,
+                n_ai_turns,
+                n_tool_calls,
             )
             structured_obj = result.get("structured_response") if isinstance(result, dict) else None
             if want_alts and isinstance(structured_obj, MissionPlanSet) and structured_obj.plans:
@@ -636,7 +655,10 @@ def plan_node(state: CompileState) -> dict[str, Any]:
                 llm, history_msgs, user_msg, state["area_id"], provider, model, effort
             )
             if structured is None:
-                return {"draft_plan": None, "validation_errors": [err or "planner produced no plan"]}
+                return {
+                    "draft_plan": None,
+                    "validation_errors": [err or "planner produced no plan"],
+                }
     else:
         # ---- Fast: ONE direct LLM call → JSON (no tools, no agent loop) ------
         # The original single-shot planner: lowest API volume, rate-limit
@@ -697,9 +719,7 @@ def plan_node(state: CompileState) -> dict[str, Any]:
         md_slot = state.get("multi_drone_slot")
         sub_region = None
         if md_slot and md_slot.get("total", 1) > 1:
-            sub_region = band_subregion(
-                boundary_poly, md_slot.get("index", 0), md_slot["total"]
-            )
+            sub_region = band_subregion(boundary_poly, md_slot.get("index", 0), md_slot["total"])
 
         def _pick_sensor(mode_str: str | None) -> Any:
             target = (mode_str or "EO").upper()
@@ -713,7 +733,9 @@ def plan_node(state: CompileState) -> dict[str, Any]:
         # one per sensor), that DOUBLES flight time and busts endurance. Collapse
         # to the first search leg and drop the rest. See agent-diagnosed root
         # cause — this was the #1 source of per-drone endurance rejections.
-        search_idxs = [i for i, lg in enumerate(structured.legs) if lg.leg_type == LegType.SEARCH_PATTERN]
+        search_idxs = [
+            i for i, lg in enumerate(structured.legs) if lg.leg_type == LegType.SEARCH_PATTERN
+        ]
         if len(search_idxs) > 1:
             keep = search_idxs[0]
             structured.legs = [
@@ -721,7 +743,9 @@ def plan_node(state: CompileState) -> dict[str, Any]:
                 for i, lg in enumerate(structured.legs)
                 if lg.leg_type != LegType.SEARCH_PATTERN or i == keep
             ]
-            log.info("collapsed %d SEARCH_PATTERN legs to 1 (single-pass coverage)", len(search_idxs))
+            log.info(
+                "collapsed %d SEARCH_PATTERN legs to 1 (single-pass coverage)", len(search_idxs)
+            )
 
         # Deterministic altitude for coverage sweeps: fly as HIGH as legally
         # allowed (widest sensor swath → fewest tracks → least duration/battery).
@@ -740,7 +764,15 @@ def plan_node(state: CompileState) -> dict[str, Any]:
         _cmd_lc = (state.get("raw_command") or "").lower()
         wants_detail = any(
             k in _cmd_lc
-            for k in ("low altitude", "low alt", "close", "detail", "high resolution", "high-res", "fine")
+            for k in (
+                "low altitude",
+                "low alt",
+                "close",
+                "detail",
+                "high resolution",
+                "high-res",
+                "fine",
+            )
         )
 
         for leg_idx, leg in enumerate(structured.legs):
@@ -828,9 +860,7 @@ def plan_node(state: CompileState) -> dict[str, Any]:
                 if leg.leg_type != LegType.TRANSIT or len(leg.geometry) < 3:
                     continue
                 alt = leg.geometry[0].alt_m if leg.geometry else 60.0
-                new_pts = perimeter_patrol_fit_to_boundary(
-                    boundary_poly, nfz_polys, altitude_m=alt
-                )
+                new_pts = perimeter_patrol_fit_to_boundary(boundary_poly, nfz_polys, altitude_m=alt)
                 if len(new_pts) < 3:
                     continue
                 leg.geometry = new_pts
@@ -845,12 +875,8 @@ def plan_node(state: CompileState) -> dict[str, Any]:
                 break  # only replace the first/longest patrol TRANSIT
 
             if patrol_replaced:
-                structured.total_duration_s = sum(
-                    leg.est_duration_s for leg in structured.legs
-                )
-                structured.total_battery_pct = sum(
-                    leg.est_battery_pct for leg in structured.legs
-                )
+                structured.total_duration_s = sum(leg.est_duration_s for leg in structured.legs)
+                structured.total_battery_pct = sum(leg.est_battery_pct for leg in structured.legs)
                 starting_pct = float(state.get("drone_state", {}).get("battery_pct", 100.0))
                 structured.battery_reserve_pct = starting_pct - structured.total_battery_pct
     except Exception as e:  # noqa: BLE001 — replacement is best-effort
@@ -917,7 +943,10 @@ def plan_node(state: CompileState) -> dict[str, Any]:
                 structured.legs = [takeoff_leg, *core, rtb_leg]
                 log.info(
                     "home routing: takeoff %.5f,%.5f → land %.5f,%.5f (%s base)",
-                    takeoff[0], takeoff[1], landing[0], landing[1],
+                    takeoff[0],
+                    takeoff[1],
+                    landing[0],
+                    landing[1],
                     "same" if takeoff == landing else "different",
                 )
         except Exception as e:  # noqa: BLE001 — best-effort; LLM legs still stand
@@ -968,10 +997,14 @@ def plan_node(state: CompileState) -> dict[str, Any]:
             mlat = sum(lats_all) / len(lats_all)
             import math as _m  # noqa: PLC0415
 
-            margin_deg = 15.0 * (
-                1.0 / METERS_PER_DEG_LAT
-                + 1.0 / max(METERS_PER_DEG_LAT * _m.cos(_m.radians(mlat)), 1e-6)
-            ) / 2.0
+            margin_deg = (
+                15.0
+                * (
+                    1.0 / METERS_PER_DEG_LAT
+                    + 1.0 / max(METERS_PER_DEG_LAT * _m.cos(_m.radians(mlat)), 1e-6)
+                )
+                / 2.0
+            )
             nfz_bufs_route = [p.buffer(margin_deg) for p in nfz_polys_route]
             routed = 0
             for leg in structured.legs:
@@ -997,9 +1030,9 @@ def plan_node(state: CompileState) -> dict[str, Any]:
             _drone_id = state["drone_state"]["drone_profile_id"]
             _profile = load_drone_profile(get_engine(), _drone_id)
             for leg in structured.legs:
-                e = _est(leg, _profile)
-                leg.est_duration_s = e.duration_s
-                leg.est_battery_pct = e.battery_pct
+                energy = _est(leg, _profile)
+                leg.est_duration_s = energy.duration_s
+                leg.est_battery_pct = energy.battery_pct
             structured.total_duration_s = sum(leg.est_duration_s for leg in structured.legs)
             structured.total_battery_pct = sum(leg.est_battery_pct for leg in structured.legs)
             _start_pct = float(state.get("drone_state", {}).get("battery_pct", 100.0))
