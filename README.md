@@ -11,8 +11,11 @@ Turns a plain-English drone command ("patrol the north perimeter and check the
 fuel depot for heat anomalies") into a validated mission plan, or tells you
 why it can't. Perception plans. It does not fly.
 
-> Reviewing this for the first time? Start at
-> [`docs/GUIDE.md`](./docs/GUIDE.md).
+> **New here?** Start at [`docs/GUIDE.md`](./docs/GUIDE.md) for orientation, reading paths, the safety model, and the metrics reference.
+>
+> **Want the in-depth backend architecture?** Two docs go deep:
+> - [`docs/LANGCHAIN.md`](./docs/LANGCHAIN.md) — how the LangChain/LangGraph orchestration actually works, chain by chain (the compile graph, the planning agent + tools, the deterministic geometry pipeline, the supervisor subgraph).
+> - [`docs/DESIGN_DECISIONS.md`](./docs/DESIGN_DECISIONS.md) — the full decision log, every non-trivial choice with the files it owns. The deepest ones: the independent **kinematic verifier** (DD-015), the **tool-calling planning agent** (DD-016), the **fast/balanced/thorough effort tiers** + agent fallback (DD-017), **deterministic search-pattern geometry** (DD-010), and the **inflight supervisor** (DD-014).
 
 ## Prerequisites
 
@@ -105,11 +108,13 @@ replan mid-flight when conditions change (wind spike, pop-up NFZ, sensor
 fault). Both paths run every candidate plan through the same deterministic
 validator before anything is allowed forward.
 
-The full LangGraph diagram is in [`docs/graph.mmd`](./docs/graph.mmd). Why it
-looks the way it does (a tool-calling planning agent with a fast single-call
-tier, repair loop capped at 3, Postgres-backed approval interrupt) is in
-[`docs/DESIGN_DECISIONS.md`](./docs/DESIGN_DECISIONS.md). What the safety
-kernel actually checks is in [`docs/GUIDE.md`](./docs/GUIDE.md#the-safety-model).
+The full LangGraph diagram is in [`docs/graph.mmd`](./docs/graph.mmd). For the
+**in-depth backend architecture**, read [`docs/LANGCHAIN.md`](./docs/LANGCHAIN.md)
+(the orchestration chain by chain) and [`docs/DESIGN_DECISIONS.md`](./docs/DESIGN_DECISIONS.md)
+(why it looks the way it does — the tool-calling agent, the kinematic verifier,
+the effort tiers, the repair loop cap, the Postgres-backed approval interrupt).
+What the safety kernel actually checks is in
+[`docs/GUIDE.md`](./docs/GUIDE.md#the-safety-model).
 
 ## Tech stack
 
