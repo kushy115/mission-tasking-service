@@ -22,8 +22,6 @@ from app.api.models import (
     DroneUpsertRequest,
     MissionChatRequest,
     MissionChatResponse,
-    SupervisorInjectRequest,
-    SupervisorInjectResponse,
     VerifyResponse,
 )
 from app.export import EXPORT_FORMATS, render_export
@@ -101,9 +99,19 @@ def upsert_area_endpoint(req: AreaUpsertRequest) -> AreaUpsertResponse:
             )
         nfz_polys.append(poly)
 
-    home_pt = Point(req.home_lon, req.home_lat)
-    home_was_snapped = not boundary.exterior.distance(home_pt) < 1e-9
-    snapped_lon, snapped_lat = snap_home_to_boundary(boundary, req.home_lon, req.home_lat)
+    requested_bases = req.home_bases or [(req.home_lon, req.home_lat)]
+    snapped_bases: list[tuple[float, float]] = []
+    home_was_snapped = False
+    for i, (lon, lat) in enumerate(requested_bases):
+        if not (-180.0 <= lon <= 180.0 and -90.0 <= lat <= 90.0):
+            raise HTTPException(status_code=400, detail=f"home_bases[{i}] is outside lon/lat bounds")
+        home_pt = Point(lon, lat)
+        if boundary.exterior.distance(home_pt) >= 1e-9:
+            home_was_snapped = True
+        snapped_bases.append(snap_home_to_boundary(boundary, lon, lat))
+    if not snapped_bases:
+        raise HTTPException(status_code=400, detail="at least one home base is required")
+    snapped_lon, snapped_lat = snapped_bases[0]
 
     # Assemble a GeoJSON FeatureCollection that mirrors the seed format so
     # upsert_area can reuse the same path.
@@ -113,7 +121,11 @@ def upsert_area_endpoint(req: AreaUpsertRequest) -> AreaUpsertResponse:
             {
                 "type": "Feature",
                 "geometry": boundary.__geo_interface__,
-                "properties": {"role": "boundary", "home": [snapped_lon, snapped_lat]},
+                "properties": {
+                    "role": "boundary",
+                    "home": [snapped_lon, snapped_lat],
+                    "home_bases": [[lon, lat] for lon, lat in snapped_bases],
+                },
             },
             *[
                 {
@@ -139,6 +151,7 @@ def upsert_area_endpoint(req: AreaUpsertRequest) -> AreaUpsertResponse:
         area_id=req.area_id,
         home_lon=snapped_lon,
         home_lat=snapped_lat,
+        home_bases=snapped_bases,
         nfz_count=len(nfz_polys),
         home_was_snapped=home_was_snapped,
     )
@@ -277,7 +290,10 @@ def _invoke_compile_graph(
     request_id: str | None,
     alternatives_requested: bool,
     multi_drone_slot: dict[str, Any] | None = None,
+    assigned_home: tuple[float, float] | None = None,
     conversation_history: list[dict[str, Any]] | None = None,
+    selected_sensors: list[str] | None = None,
+    planning_effort: str | None = None,
 ) -> dict[str, Any]:
     """One graph invocation for one drone. Returns the final state dict."""
     thread_id = (request_id or str(uuid.uuid4())) + (
@@ -294,7 +310,10 @@ def _invoke_compile_graph(
         "repair_attempts": 0,
         "alternatives_requested": alternatives_requested,
         "multi_drone_slot": multi_drone_slot,
+        "assigned_home": assigned_home,
         "conversation_history": conversation_history or [],
+        "selected_sensors": selected_sensors or [],
+        "planning_effort": planning_effort or "",
     }
     with COMPILE_DURATION.time():
         result: dict[str, Any] = graph.invoke(initial_state, config=config)
@@ -311,17 +330,86 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
     """
     graph = request.app.state.compile_graph
     log.info(
-        "compile request area=%s drones=%s command=%r",
+        "compile request area=%s drones=%s auto=%s bias=%.2f command=%r",
         req.area_id,
         req.drone_ids or [req.drone_state.drone_profile_id],
+        req.auto_drones,
+        req.drones_vs_time_bias,
         req.command[:120],
     )
 
-    # --- multi-drone path ---
-    if req.drone_ids and len(req.drone_ids) >= 1:
-        from app.graph.multi_drone import assign_slots
+    # --- auto-fleet selection (LLM picks N drones + profiles) ---
+    auto_reasoning = ""
+    drone_ids: list[str] | None = req.drone_ids
+    if not drone_ids and req.auto_drones:
+        from app.geo.store import load_geo_context
+        from app.graph.auto_drones import pick_fleet
 
-        slots = assign_slots(req.drone_ids)
+        try:
+            geo = load_geo_context(get_engine(), req.area_id)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        profiles = list_drones(get_engine())
+        if not profiles:
+            raise HTTPException(status_code=500, detail="no drone profiles available")
+        geo_summary = {"boundary_lonlat": list(geo.boundary.exterior.coords)}
+        pick = pick_fleet(
+            command=req.command,
+            geo_context=geo_summary,
+            profiles=profiles,
+            bias=req.drones_vs_time_bias,
+            preferred_profile_id=req.drone_state.drone_profile_id,
+        )
+        drone_ids = pick["drone_profile_ids"]
+        auto_reasoning = pick["reasoning"]
+
+    # --- single-drone shortcut when auto-fleet picked exactly one ---
+    if drone_ids and len(drone_ids) == 1 and not req.drone_ids:
+        single_drone_state = {
+            "drone_profile_id": drone_ids[0],
+            "battery_pct": req.drone_state.battery_pct,
+        }
+        try:
+            final_state = _invoke_compile_graph(
+                graph,
+                command=req.command,
+                area_id=req.area_id,
+                clearance=req.operator_clearance,
+                drone_state=single_drone_state,
+                request_id=req.request_id,
+                alternatives_requested=bool(req.alternatives),
+                conversation_history=req.conversation_history or None,
+                selected_sensors=req.selected_sensors or None,
+                planning_effort=req.planning_effort,
+            )
+        except Exception as e:  # noqa: BLE001
+            COMPILE_REQUESTS.labels(status="error").inc()
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        plan = MissionPlan.model_validate(final_state["draft_plan"])
+        COMPILE_REQUESTS.labels(status=plan.status.value).inc()
+        repair_loops = int(final_state.get("repair_attempts", 0))
+        REPAIR_LOOPS.observe(repair_loops)
+        return CompileResponse(
+            plan=plan,
+            repair_loops=repair_loops,
+            awaiting_approval=plan.status == MissionStatus.READY_FOR_APPROVAL,
+            auto_drones_reasoning=auto_reasoning,
+        )
+
+    # --- multi-drone path ---
+    if drone_ids and len(drone_ids) >= 1:
+        from app.geo.store import load_geo_context
+        from app.graph.multi_drone import assign_slots, nearest_home_base
+
+        # Ceiling-aware altitude layering: a low area ceiling (e.g. 50m) can't
+        # fit the default 40/70/100m layers, so pass it in to compress them.
+        try:
+            geo = load_geo_context(get_engine(), req.area_id)
+            _ceiling = geo.altitude_ceiling_m
+        except Exception:  # noqa: BLE001
+            geo = None
+            _ceiling = None
+        slots = assign_slots(drone_ids, ceiling_m=_ceiling)
         group_plans: list[MissionPlan] = []
         total_repairs = 0
         for slot in slots:
@@ -329,6 +417,16 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
                 "drone_profile_id": slot.drone_profile_id,
                 "battery_pct": req.drone_state.battery_pct,
             }
+            assigned_home = None
+            if geo is not None:
+                from app.geo.patterns import band_subregion
+
+                sub = band_subregion(geo.boundary, slot.index, slot.total)
+                band_shape = geo.boundary.intersection(sub) if sub is not None else geo.boundary
+                centroid = band_shape.centroid if not band_shape.is_empty else geo.boundary.centroid
+                assigned_home = nearest_home_base(
+                    geo.home_bases or (geo.home_point,), (float(centroid.x), float(centroid.y))
+                )
             try:
                 final = _invoke_compile_graph(
                     graph,
@@ -339,6 +437,9 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
                     request_id=req.request_id,
                     alternatives_requested=False,  # group mode disables alts
                     multi_drone_slot=slot.to_dict(),
+                    assigned_home=assigned_home,
+                    selected_sensors=req.selected_sensors or None,
+                    planning_effort=req.planning_effort,
                 )
             except Exception as e:  # noqa: BLE001
                 COMPILE_REQUESTS.labels(status="error").inc()
@@ -364,6 +465,7 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
                 p.status == MissionStatus.READY_FOR_APPROVAL for p in group_plans
             ),
             group_plans=group_plans,
+            auto_drones_reasoning=auto_reasoning,
         )
 
     # --- single-drone path (legacy) ---
@@ -377,6 +479,8 @@ def compile_mission(req: CompileRequest, request: Request) -> CompileResponse:
             request_id=req.request_id,
             alternatives_requested=bool(req.alternatives),
             conversation_history=req.conversation_history or None,
+            selected_sensors=req.selected_sensors or None,
+            planning_effort=req.planning_effort,
         )
         # LFU bookkeeping: count this access on the area (DD-008).
         try:
@@ -466,13 +570,13 @@ def export_mission_endpoint(mission_id: str, format: str = "kml") -> Response:
 def chat_about_mission(mission_id: str, req: MissionChatRequest) -> MissionChatResponse:
     """Follow-up conversation with an LLM scoped to one mission.
 
-    The plan + its critique + advisor suggestions are loaded once and injected
+    The plan + its grounded summary + advisor suggestions are loaded once and injected
     into the system prompt so the LLM can reason about THIS plan specifically.
     History is stateless: the client sends every prior turn each time. This
     keeps the endpoint horizontally scalable and trace-friendly.
 
     Uses LangChain directly (init_chat_model + Human/AI/SystemMessage). The
-    advisor and critique are NOT re-run here — this is a discussion layer on
+    advisor suggestions are NOT re-run here — this is a discussion layer on
     top of an already-produced plan.
     """
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -517,8 +621,17 @@ already passed the safety kernel. Your job is to:
   - answer questions about the plan
   - propose tweaks the operator could adopt
   - explain tradeoffs (battery vs coverage, sensor choice vs visibility, etc.)
-  - if the operator wants to change the plan, describe what they should re-prompt
-    the main compile endpoint with — you do NOT modify the plan yourself
+  - if the operator wants to RETRY / REDO / RECOMPILE the mission (including
+    after a rejection or when they want a different approach), do BOTH of:
+      (1) write a one-paragraph reply explaining what you're going to retry with
+          and why, AND
+      (2) emit the sentinel below on its OWN line at the very end of your reply,
+          exactly once, with no markdown:
+              <<<RETRY: <revised natural-language command for the planner>>>>
+          The revised command must be a self-contained instruction the planner
+          can act on (the planner does NOT see the prior plan or this chat). If
+          the operator's ask is just clarifying questions or a small tweak that
+          doesn't need a new compile, do NOT emit the sentinel.
 
 Stay concise (1–4 short paragraphs). Be specific about altitudes, leg numbers,
 sensor modes — operators want concrete recommendations, not platitudes. Do NOT
@@ -530,7 +643,7 @@ PLAN UNDER DISCUSSION:
   status: {plan.status.value}
   total duration: {plan.total_duration_s:.0f}s ({plan.total_duration_s / 60:.1f} min)
   battery use: {plan.total_battery_pct:.1f}%  reserve at landing: {plan.battery_reserve_pct:.1f}%
-  reasoning: {plan.reasoning_trace}
+  summary: {plan.reasoning_trace}
   legs:
 {chr(10).join(leg_lines) if leg_lines else "  (no legs)"}
 
@@ -553,21 +666,45 @@ PLAN UNDER DISCUSSION:
     if isinstance(reply, list):
         # Anthropic SDK sometimes returns content as a list of blocks; flatten.
         reply = "".join(getattr(b, "text", str(b)) for b in reply)
-    return MissionChatResponse(reply=str(reply).strip(), mission_id=mission_id)
+    reply_str = str(reply).strip()
+
+    # Pull <<<RETRY: ...>>> sentinel off the reply if present. Allows the chat
+    # LLM to signal "the operator wants to recompile with these tweaks" so the
+    # UI can surface a one-click Retry button.
+    import re as _re  # local, not exposed
+
+    action = ""
+    refined_command = ""
+    m = _re.search(r"<<<RETRY:\s*(.+?)\s*>>>", reply_str, flags=_re.DOTALL)
+    if m:
+        refined_command = m.group(1).strip().strip(">").strip()
+        action = "retry"
+        reply_str = _re.sub(r"\s*<<<RETRY:.+?>>>\s*$", "", reply_str, flags=_re.DOTALL).strip()
+
+    return MissionChatResponse(
+        reply=reply_str,
+        mission_id=mission_id,
+        action=action,
+        refined_command=refined_command,
+    )
 
 
 @router.post("/v1/missions/{mission_id}:verify", response_model=VerifyResponse)
 def verify_mission(mission_id: str) -> VerifyResponse:
     """Run the approved plan through the deterministic execution verifier."""
     engine = get_engine()
-    raw = load_mission(engine, mission_id)
-    if raw is None:
+    detail = load_mission_detail(engine, mission_id)
+    if detail is None:
         raise HTTPException(status_code=404, detail=f"mission {mission_id} not found")
-    plan = MissionPlan.model_validate(raw)
+    plan = MissionPlan.model_validate(detail["plan"])
 
-    # Use the drone profile that the operator would actually fly. For the demo
-    # we accept the area-default — production would persist this with the plan.
-    profile = load_drone_profile(engine, "long-endurance-quad")
+    # Verify against the SAME drone profile the plan was compiled for — otherwise
+    # cruise speed / battery capacity differ and the verifier flags bogus drift.
+    profile_id = detail.get("drone_profile_id") or "long-endurance-quad"
+    try:
+        profile = load_drone_profile(engine, profile_id)
+    except Exception:  # noqa: BLE001 — profile renamed/removed; fall back gracefully
+        profile = load_drone_profile(engine, "long-endurance-quad")
     result = simulate_execution(plan, profile)
     return VerifyResponse(
         mission_id=mission_id,
@@ -575,44 +712,4 @@ def verify_mission(mission_id: str) -> VerifyResponse:
         actual_duration_s=result.actual_duration_s,
         actual_battery_pct=result.actual_battery_pct,
         deviations=result.deviations,
-    )
-
-
-@router.post(
-    "/v1/missions/{mission_id}/sim:inject",
-    response_model=SupervisorInjectResponse,
-)
-def inject_supervisor_event(
-    mission_id: str, req: SupervisorInjectRequest
-) -> SupervisorInjectResponse:
-    """Inject an in-flight event for the live supervisor (DD-014).
-
-    The active live session is identified by `(mission_id, session_id)`. If
-    no such session is currently streaming, returns 404. The event is dropped
-    on the queue and consumed by the supervisor on its next decision tick.
-    """
-    from app.supervisor.events import Event, get_queue
-
-    q = get_queue(mission_id, req.session_id)
-    if q is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"no active live session for mission_id={mission_id!r}, "
-            f"session_id={req.session_id!r}",
-        )
-    try:
-        event = Event.from_dict({"type": req.type, "payload": req.payload, "note": req.note})
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        q.put_nowait(event)
-    except Exception as e:  # noqa: BLE001 — queue full
-        raise HTTPException(
-            status_code=503,
-            detail=f"event queue full: {e}",
-        ) from e
-    return SupervisorInjectResponse(
-        accepted=True,
-        queue_size=q.qsize(),
-        detail=f"queued {event.type.value}",
     )

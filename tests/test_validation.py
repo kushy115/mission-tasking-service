@@ -192,6 +192,61 @@ def test_missing_rtb_flagged(geo, profile):
     assert any("RETURN_TO_BASE" in v for v in violations)
 
 
+def test_rtb_can_end_at_any_registered_home_base(profile):
+    boundary = Polygon(
+        [(-74.01, 40.0), (-74.0, 40.0), (-74.0, 40.01), (-74.01, 40.01), (-74.01, 40.0)]
+    )
+    geo = GeoContext(
+        area_id="area-test",
+        boundary=boundary,
+        nfz_polygons=(),
+        altitude_ceiling_m=120.0,
+        home_point=(-74.008, 40.001),
+        home_bases=((-74.008, 40.001), (-74.0, 40.009)),
+    )
+    legs = [
+        MissionLeg(
+            leg_type=LegType.TRANSIT,
+            geometry=[_wp(40.001, -74.008), _wp(40.008, -74.002)],
+            sensor_mode=SensorMode.OFF,
+            est_duration_s=0,
+            est_battery_pct=0,
+        ),
+        MissionLeg(
+            leg_type=LegType.RETURN_TO_BASE,
+            geometry=[_wp(40.008, -74.002), _wp(40.009, -74.0, 30)],
+            sensor_mode=SensorMode.OFF,
+            est_duration_s=0,
+            est_battery_pct=0,
+        ),
+    ]
+    violations, report = validate_plan(_plan_with(legs), geo, profile)
+    assert not violations, violations
+    assert report.ends_with_rtb
+
+
+def test_rtb_to_unregistered_base_flagged(geo, profile):
+    legs = [
+        MissionLeg(
+            leg_type=LegType.TRANSIT,
+            geometry=[_wp(40.001, -74.008), _wp(40.002, -74.007)],
+            sensor_mode=SensorMode.OFF,
+            est_duration_s=0,
+            est_battery_pct=0,
+        ),
+        MissionLeg(
+            leg_type=LegType.RETURN_TO_BASE,
+            geometry=[_wp(40.002, -74.007), _wp(40.009, -74.001, 30)],
+            sensor_mode=SensorMode.OFF,
+            est_duration_s=0,
+            est_battery_pct=0,
+        ),
+    ]
+    violations, report = validate_plan(_plan_with(legs), geo, profile)
+    assert not report.ends_with_rtb
+    assert any("registered home base" in v for v in violations)
+
+
 def test_battery_exhaustion_flagged(profile, geo):
     # Lots of long loiter at hover power
     legs = [

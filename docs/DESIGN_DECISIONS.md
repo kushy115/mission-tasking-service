@@ -1,7 +1,7 @@
 # Design Decisions
 
 This document records the major design choices made for each non-trivial
-feature of the Mission Tasking Service. Read this before changing anything in
+feature of Perception. Read this before changing anything in
 the files referenced from each section.
 
 ## How to read this doc
@@ -70,8 +70,8 @@ revisit what they planned earlier without scraping the DB by hand.
 a standard waypoint format that real ground-control software can consume.
 
 ### Why
-Lets you take an MTS-compiled plan and load it into actual flight-planning
-software (Mission Planner, QGroundControl, DJI Fly) even though MTS itself has
+Lets you take an Perception-compiled plan and load it into actual flight-planning
+software (Mission Planner, QGroundControl, DJI Fly) even though Perception itself has
 no hardware integration.
 
 ### Key choices
@@ -203,40 +203,28 @@ the system becomes self-service.
 
 ---
 
-## 6. LLM Plan Critique Pass
+## 6. Grounded Plan Summary
 
 **Status:** implemented
-**Files:** `app/graph/nodes.py`, `app/graph/builder.py`, `app/graph/state.py`,
-`app/schemas/plan.py`
+**Files:** `app/graph/nodes.py`, `app/static/index.html`
 
 ### What
-After the deterministic kernel passes a plan, a second lightweight LLM call
-critiques it for *tactical* quality (orientation vs. wind, target coverage
-priority, sensor choice). Returns a `confidence_score` (0–1) and free-text
-`critique_notes` that surface in the UI.
+After the deterministic kernel passes a plan, `finalize_node` replaces the
+planner-authored reasoning text with a concise summary built from real plan
+facts: fleet size, multi-drone band assignment, sensors, altitude range,
+duration, battery use/reserve, and the kernel checks that passed.
 
 ### Why
-The kernel guarantees *safety*. It does not guarantee *quality* — a plan can
-be perfectly legal and still operationally dumb (e.g. flying a lawnmower
-oriented across-wind, or searching the wrong half of the area). The critique
-pass surfaces those soft issues without giving the LLM veto power.
+The LLM planner can narrate confidently even after deterministic geometry,
+altitude, sensor, or RTB fixes have changed the plan. The UI should explain
+what the service will actually fly, not what the model thought it emitted.
 
 ### Key choices
-- **Second LLM call, NOT a multi-turn dialog.** The critique is one extra
-  `llm.invoke` after `validate` passes, returning a small JSON. We don't loop
-  on it. This costs one extra request per successful compile (free-tier
-  friendly) and adds maybe 1–2s of latency.
-- **Critique is advisory only.** Low confidence does NOT block approval — it
-  shows in the UI as a meter so the operator can make a judgment call. The
-  safety kernel remains the only thing that can reject.
-- **`confidence_score` is bucketed in the UI**: ≥0.8 green, 0.5–0.8 yellow,
-  <0.5 red. Bucketing avoids fake precision (the model is not actually
-  calibrated to two decimal places).
-- **Graph wiring**: a new `critique` node sits between `validate` (when it
-  succeeds) and `finalize`. On critique-LLM failure we set
-  `confidence_score=None` and continue — never block on the soft check.
-- **Skipped when the plan is REJECTED / NEEDS_CLARIFICATION** — there's
-  nothing to critique tactically when the plan is structurally invalid.
+- **No scoring.** The UI does not show a pseudo-calibrated confidence meter.
+- **Facts only.** Numeric and constraint-related text comes from `MissionPlan`
+  and `ConstraintReport`, after validation has recomputed totals.
+- **Advisor remains advisory.** The separate optimization advisor may still
+  suggest two concise optional tweaks, but it never blocks approval.
 
 ---
 
@@ -272,7 +260,7 @@ plan is faster but riskier.
   planner re-tries the whole set. We do NOT independently repair each
   alternative — that would multiply costs.
 - **Defaults to OFF.** `alternatives` is a query option; standard compile is
-  still one plan, one validate, one critique. Off by default keeps the demo
+  still one plan, one validate, one advisor pass. Off by default keeps the demo
   free-tier-cheap.
 
 ---
@@ -409,6 +397,10 @@ above. They were captured before the per-feature sections were written and
 are preserved here for continuity.
 
 ## DD-001 — `plan` node is a direct LLM call, not a tool-calling agent
+
+> **⚠️ SUPERSEDED by DD-016.** The `plan` node is now a real `create_agent`
+> tool-calling agent again. This entry is kept for history — it explains why we
+> *temporarily* moved away from the agent, and DD-016 explains why we moved back.
 
 **Decision.** The planning step is implemented as a single `llm.invoke()` per
 attempt, with the geo context inlined into the system prompt. We do **not**
@@ -902,7 +894,7 @@ service goes from "plan once" to "plan, fly, react, re-plan."
   search of region X then RTB"). The seam is `replan_node` in
   `app/supervisor/nodes.py` — swap the body to invoke
   `app.state.compile_graph.invoke(...)` with a transformed `CompileState`,
-  and route the result through the existing validate / critique / advisor
+  and route the result through the existing validate / advisor
   chain. Skipped here because the demo value is in showing the *loop*,
   not in proving the loop's reach.
 - **In-process event queue dict.** Single-replica friendly, multi-replica
@@ -944,4 +936,184 @@ service goes from "plan once" to "plan, fly, react, re-plan."
   polyline overlay.
 - `tests/test_supervisor.py` — 13 policy tests, all green.
 
+---
+
+## DD-015 — Independent kinematic trajectory model for verify + live sim
+
+**Decision.** Both the execution verifier (`POST /v1/missions/{id}:verify`) and
+the live-sim WebSocket now re-fly the plan against a dedicated **kinematic
+trajectory model** (`app/sim/kinematics.py`), instead of replaying the planner's
+own closed-form energy estimate. The model time-parameterizes the plan's
+polyline at a fixed `dt` tick and respects, from the operator-authored drone
+profile:
+
+- **linear acceleration** (`max_accel_mps2`) — trapezoidal ramp-up / braking,
+  with a backward braking constraint `v ≤ √(v_out² + 2·a·d_remaining)`;
+- **cornering** — pass-through airspeed at each turn is capped by
+  `v_cruise · cos(turn/2)` (straight → cruise; 180° → near-stop). Standard
+  cornering heuristic; no arc radius needed;
+- **climb rate** (`climb_rate_mps`) — steep legs are climb-bound
+  (`v ≤ climb_rate / slope`);
+- a **wind triangle** — the *along-track* component of the wind vector speeds up
+  tailwind legs and slows + adds power on headwind legs. This finally uses
+  `wind_dir_deg`, which the scalar penalty in `physics.py` (§4) discards.
+
+The verifier additionally checks, per tick: geofence containment and NFZ
+clearance along the *whole* path (not just at waypoints), and a **return-to-home
+reachability** test — at every tick the drone must still have enough battery to
+fly to the nearest base and keep the configured reserve, flagging the
+point-of-no-return.
+
+**Why.** The old `executor.py` called the same `estimate_mission()` the planner
+used, so "Pre-flight check passed ✓" was almost tautological — it could only
+catch endurance overflow and waypoint-vertex geofence exits. A verifier that
+checks the model against itself proves nothing. Making the kinematic model
+*independent* lets it legitimately disagree with the plan, and the drift it
+surfaces is physically meaningful (sharp search-pattern turns, accel/braking,
+headwind legs the coarse estimator under-counts). It also makes the live-sim
+animation honest: the drone now slows into turns and reacts to wind instead of
+sliding between waypoints at a flat speed.
+
+**Trade-off.** The kinematic model and the planner's estimator are now two
+models of the same flight, so they can disagree by more than the 10% tolerance
+on legitimately twisty plans — that surfaces as a `flown_ok=false` deviation,
+which is the intended signal, not a bug. We deliberately kept the planner's fast
+closed-form estimator unchanged: it stays in the LLM repair loop (cheap,
+deterministic, good enough to plan against), and the heavier per-tick model
+lives only in the verify / sim paths. Scope kept intentionally small —
+non-linear battery (voltage sag / Peukert / temperature derate) and terrain-AGL
+clearance are noted as natural follow-ons but **not** implemented here.
+
+**Where in code.**
+- `app/sim/kinematics.py` — the pure, deterministic integrator;
+  `simulate_trajectory(...) -> KinTrace` (the per-tick "where the drone goes"
+  trace). No LLM / network / sleep.
+- `app/sim/executor.py` — verifier consumes the trace; endurance, drift,
+  per-tick geofence + NFZ, return-to-home reachability.
+- `app/sim/stream.py` — live-sim animates the same trace (frame contract
+  unchanged, so the UI is untouched); aborts on geofence breach or NFZ entry.
+- `app/validation/physics.py` + `app/geo/store.py` + `data/drones/*.yaml` —
+  the optional `max_accel_mps2` profile field (defaults to 2.5, so existing
+  profiles and DB rows stay valid).
+- `tests/test_kinematics.py` — corner-speed monotonicity, wind-triangle sign,
+  accel-vs-teleport, tailwind-faster-than-headwind, turn-costs-time.
+
+---
+
+## DD-016 — `plan` node is a real `create_agent` tool-calling agent (reverses DD-001)
+
+**Decision.** The `plan` node is once again a LangChain **`create_agent`**
+tool-calling agent (the canonical pattern from CLAUDE.md §4 + §7), replacing the
+single `llm.invoke()` of DD-001. The agent is bound to a per-compile **planning
+tool suite** (`app/tools/planning_tools.py`) and returns a schema-valid plan via
+`response_format`. The overall compile flow is still the explicit `StateGraph`
+(intake → plan → validate → … → finalize); the agent lives *inside* the `plan`
+node, and the deterministic safety kernel is still the source of truth.
+
+**The tools** (built per-compile by `build_planning_tools(geo, profile)`, closing
+over the area's PostGIS geo context + the selected drone profile so the model
+only supplies meaningful args):
+- `get_geofence()` — boundary / NFZ bounds / ceiling / home bases;
+- `check_path_clear(polyline)` — Shapely containment + NFZ intersection;
+- `estimate_battery(legs)` — wraps `physics.estimate_mission` (time/battery/reserve/endurance);
+- `get_sensor_coverage(alt, sensor)` — swath + ground resolution + recommended track spacing;
+- `lookup_search_pattern(name, alt, spacing)` — NFZ-aware geometry from `geo/patterns`.
+
+**Why now.** DD-001's reasons were *cost/quota* (Gemini free tier) and a
+provider-specific crash — not architecture. On Anthropic Haiku those constraints
+are gone, and grounding the model with tools is the whole point of the project
+(demonstrating production agent engineering): the agent checks path clearance,
+battery, and coverage *before* committing, so it self-corrects within its own
+loop instead of relying entirely on the kernel + repair loop. A typical single
+compile makes ~4 model turns / ~7 tool calls.
+
+**Key choices.**
+- **`ToolStrategy`, not provider-native structured output.** Anthropic's *strict*
+  native structured output compiles a grammar over the (large, deeply-nested)
+  `MissionPlan` schema *plus* the strict tool grammars and overflows its size
+  limit (`"compiled grammar is too large"`). Wrapping the response schema in
+  `ToolStrategy(MissionPlan)` emits the plan as a **non-strict** tool call —
+  same schema-validated result, no grammar blow-up. Alternatives mode uses
+  `ToolStrategy(MissionPlanSet)`.
+- **`ModelRetryMiddleware(max_retries=3)`** for exponential-backoff on transient
+  provider errors (CLAUDE.md §4's model-retry middleware).
+- **`recursion_limit=60`** bounds the agent's tool loop (~2 graph steps per tool
+  round-trip) so a runaway never hangs a request.
+- **The deterministic post-processing is unchanged** (DD-010 search-pattern /
+  perimeter geometry, sensor clamp, home-routing, NFZ detours, geofence snap).
+  The agent produces a sound first draft; the deterministic layer still
+  guarantees the safety-critical geometry, and the kernel still has final say.
+
+**Trade-off.** More LLM calls per compile than DD-001's single shot (cost up,
+latency up a little) — acceptable now that quota isn't the constraint, and bought
+back by fewer repair loops because the draft is tool-grounded. The agent's tool
+work on search-pattern geometry is partly redundant with the deterministic
+densifier, but it still improves transit routing and feasibility on non-pattern
+missions where that geometry is the final geometry.
+
+**Where in code.**
+- `app/tools/planning_tools.py` — the `@tool` suite + `build_planning_tools`.
+- `app/graph/nodes.py` — `plan_node` builds the agent
+  (`create_agent(model, tools, system_prompt, response_format=ToolStrategy(...),
+  middleware=[ModelRetryMiddleware(...)])`), invokes it, and reads
+  `result["structured_response"]`; `MissionPlanSet` is the alternatives schema.
+- `tests/test_graph.py` — graph tests now stub `create_agent` (return a fake
+  agent whose `.invoke()` yields `{"structured_response": <plan>}`).
+
+---
+
+## DD-017 — Planning-effort tiers (fast / balanced / thorough) + agent fallback
+
+**Decision.** The plan node now runs at one of three operator-selectable effort
+tiers, chosen per-compile (UI dropdown → `CompileRequest.planning_effort`) and
+defaulted via `MTS_DEFAULT_PLANNING_EFFORT`:
+
+| Tier | Model (default, env-overridable) | Plan path | Model calls / drone |
+|------|------|------|------|
+| `fast` | `claude-haiku-4-5` | one direct LLM call → JSON (the pre-DD-016 path) | **1** |
+| `balanced` | configured `MTS_LLM_MODEL` | tool-calling agent, recursion 30 | ~4–6 |
+| `thorough` | `claude-opus-4-8` | tool-calling agent, recursion 60 | more |
+
+The tier changes **only** (a) which model is used and (b) whether the DD-016
+tool-calling agent runs. **Every downstream calculation is identical and shared
+across tiers** — the deterministic safety kernel, physics/battery, search-pattern
+densification, home-routing, NFZ detours all run the same regardless of tier.
+Fast simply skips the tool round-trips.
+
+**Why.** The tool-calling agent (DD-016) makes ~4–6 model calls per drone instead
+of one. On a constrained Anthropic rate-limit tier a multi-drone burst (≈N×6
+calls) blows past the per-minute limit and the run spends minutes in 429
+back-off. The tier lets a rate-limited operator pick `fast` (one call/drone,
+light model — same latency as the original planner) while a high-throughput
+deployment picks `thorough` (Opus, full grounding). It is a quality/throughput
+knob, not a behavior change.
+
+**Graceful agent fallback (fixes the "drone N rejected at 0% battery" bug).** In
+balanced/thorough, if the agent stalls — most often `GraphRecursionError` from
+looping on tool calls without converging — the node previously returned *no
+plan*, which the graph rejected as an **empty, 0-leg, 0-battery plan**. In a
+multi-drone group that surfaced as one drone "failing with 0% battery" while
+siblings were fine, with no clear reason (it was never a battery problem — no
+plan was produced). Now the node **falls back to a single direct LLM call**
+(`_direct_plan`, the same routine the fast tier uses) so the slot still gets a
+real plan. Additionally, the rejected-plan summary (`_grounded_plan_summary`)
+and the per-drone UI card now surface the actual `rejection_reasons` instead of a
+generic line.
+
+**Trade-off.** Fast loses the agent's tool grounding (the kernel + repair loop
+still guarantee safety, so plans are still valid — just less self-corrected
+up front). A bigger model (thorough) is *slower per call*, not faster — the
+speed lever is the rate-limit tier, not the model. The fallback pays for the
+stalled agent's wasted loop *plus* one direct call, but only on the rare stall,
+and it converts a hard failure into a working plan.
+
+**Where in code.**
+- `app/config.py` — `default_planning_effort`, `plan_model_fast/balanced/thorough`.
+- `app/graph/nodes.py` — `_llm_for(model)` (per-model cached factory),
+  `_effort_config(effort)`, `_direct_plan(...)` (shared direct call + fallback),
+  the tier branch + fallback in `plan_node`, and the reason-surfacing summary.
+- `app/graph/state.py` / `app/api/models.py` / `app/api/routes.py` —
+  `planning_effort` threaded through state, request, and all 3 invoke sites.
+- `app/static/index.html` — the "Planning effort" dropdown + per-drone rejection
+  reason line.
 

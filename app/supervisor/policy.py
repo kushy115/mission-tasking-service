@@ -122,15 +122,12 @@ def decide(
             f"{_SUPERVISOR_RESERVE_MARGIN_PCT:.0f}% (rtb cost {rtb_cost_pct:.1f}%)",
         )
 
-    # Event-priority order: manual > battery > NFZ > wind > sensor > GPS.
+    # Event-priority order: emergency land > lost link > NFZ > wind.
     order = {
         EventType.MANUAL_LAND: 0,
-        EventType.MANUAL_RTB: 1,
-        EventType.BATTERY_FAULT: 2,
-        EventType.NFZ_POPUP: 3,
-        EventType.WIND_SPIKE: 4,
-        EventType.SENSOR_FAULT: 5,
-        EventType.GPS_DROPOUT: 6,
+        EventType.LOST_LINK: 1,
+        EventType.NFZ_POPUP: 2,
+        EventType.WIND_SPIKE: 3,
     }
     events_sorted = sorted(pending_events, key=lambda e: order.get(e.type, 99))
 
@@ -138,24 +135,12 @@ def decide(
         if ev.type == EventType.MANUAL_LAND:
             return SupervisorDecision.EMERGENCY_LAND, ev.note or "operator triggered emergency land"
 
-        if ev.type == EventType.MANUAL_RTB:
-            return SupervisorDecision.RTB_NOW, ev.note or "operator triggered RTB"
-
-        if ev.type == EventType.BATTERY_FAULT:
-            extra = float(ev.payload.get("extra_drain_pct_s") or 0.0)
-            # Project remaining battery if this fault sustains over the remaining
-            # flight time. Use the leftover legs' est_duration as upper bound.
-            remaining_s = sum(float(leg.get("est_duration_s") or 0.0) for leg in remaining_legs)
-            projected_drain = remaining_batt - extra * remaining_s - rtb_cost_pct
-            if projected_drain < _SUPERVISOR_RESERVE_MARGIN_PCT:
-                return (
-                    SupervisorDecision.RTB_NOW,
-                    f"battery fault: +{extra:.2f}%/s drain over {remaining_s:.0f}s "
-                    f"would leave {projected_drain:.1f}% at home (margin "
-                    f"{_SUPERVISOR_RESERVE_MARGIN_PCT:.0f}%)",
-                )
-            # Else fault is tolerable for now.
-            continue
+        if ev.type == EventType.LOST_LINK:
+            # Standard lost-C2/GPS contingency: hold position, then return home.
+            return (
+                SupervisorDecision.LOITER_RTB,
+                ev.note or "C2/GPS link lost — holding position, then returning to base",
+            )
 
         if ev.type == EventType.NFZ_POPUP:
             try:
@@ -165,39 +150,30 @@ def decide(
             if not poly.is_valid or poly.is_empty:
                 return SupervisorDecision.CONTINUE, "nfz_popup polygon empty"
             if poly.covers(Point(current["lon"], current["lat"])):
-                # Drone is already inside it — bail straight home.
-                return SupervisorDecision.RTB_NOW, "NFZ activated over current position"
+                # Drone is already inside it — can't detour out cleanly; bail home.
+                return SupervisorDecision.RTB_NOW, "restricted airspace activated over current position"
             if _remaining_path_intersects(remaining_legs, poly):
                 return (
                     SupervisorDecision.REPLAN_FROM_HERE,
-                    "new NFZ intersects remaining plan; replanning around it",
+                    "restricted airspace ahead — rerouting around it, mission continues",
                 )
-            continue
+            return (
+                SupervisorDecision.CONTINUE,
+                "restricted airspace appeared but clear of remaining route",
+            )
 
         if ev.type == EventType.WIND_SPIKE:
             wind = float(ev.payload.get("wind_mps") or 0.0)
             if wind > settings.weather_max_wind_mps:
                 return (
                     SupervisorDecision.RTB_NOW,
-                    f"wind {wind:.1f} m/s > tolerance {settings.weather_max_wind_mps:.1f} m/s",
+                    f"wind gust {wind:.1f} m/s exceeds airframe limit "
+                    f"{settings.weather_max_wind_mps:.1f} m/s — returning to base",
                 )
-            continue
-
-        if ev.type == EventType.SENSOR_FAULT:
-            mode = (ev.payload.get("mode") or "").upper()
-            # If any remaining leg requires this sensor, replan.
-            for leg in remaining_legs:
-                if (leg.get("sensor_mode") or "").upper() == mode:
-                    return (
-                        SupervisorDecision.REPLAN_FROM_HERE,
-                        f"{mode} sensor offline; remaining plan depends on it",
-                    )
-            continue
-
-        if ev.type == EventType.GPS_DROPOUT:
-            # Advisory: continue with a note. (A real system would degrade
-            # to dead-reckoning, but that's beyond demo scope.)
-            return SupervisorDecision.CONTINUE, "GPS degraded; nav advisory"
+            return (
+                SupervisorDecision.CONTINUE,
+                f"wind gust {wind:.1f} m/s within limit {settings.weather_max_wind_mps:.1f} m/s",
+            )
 
     return SupervisorDecision.CONTINUE, "no actionable events"
 

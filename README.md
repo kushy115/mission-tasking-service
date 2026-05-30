@@ -1,4 +1,4 @@
-# Mission Tasking Service (MTS)
+# Perception
 
 [![CI](https://github.com/kushy115/mission-tasking-service/actions/workflows/ci.yml/badge.svg)](https://github.com/kushy115/mission-tasking-service/actions/workflows/ci.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
@@ -9,14 +9,16 @@
 
 Turns a plain-English drone command ("patrol the north perimeter and check the
 fuel depot for heat anomalies") into a validated mission plan, or tells you
-why it can't. MTS plans. It does not fly.
+why it can't. Perception plans. It does not fly.
 
 > Reviewing this for the first time? Start at
-> [`docs/REVIEWER_GUIDE.md`](./docs/REVIEWER_GUIDE.md).
+> [`docs/GUIDE.md`](./docs/GUIDE.md).
 
 ## Prerequisites
 
-- Docker Desktop, running
+- A Docker-compatible engine, running. Either:
+  - **Docker Desktop** (easiest, GUI), or
+  - **Colima** — free, CLI-only, no Docker Desktop required (see [Docker-Desktop-free path](#docker-desktop-free-path-colima) below). Rancher Desktop and Podman also work.
 - `make` (already on macOS once Xcode CLT is installed; Windows: use WSL2)
 - An LLM API key from Anthropic, OpenAI, or Google. Default is Claude.
 
@@ -31,9 +33,62 @@ cp .env.example .env       # set API_KEY=...
 make demo
 ```
 
+### Docker-Desktop-free path (Colima)
+
+If you don't want Docker Desktop (license, RAM footprint, or just preference),
+use [Colima](https://github.com/abiosoft/colima). It runs a small Linux VM and
+exposes the standard `docker` + `docker compose` CLIs, so the Makefile targets
+below work unchanged.
+
+```sh
+brew install colima docker docker-compose   # one-time
+make colima-up                              # starts the VM (4 CPU / 6 GB)
+make demo                                   # same as the Docker Desktop path
+# ... when done:
+make colima-down                            # stops the VM
+```
+
+`make colima-up` is idempotent — re-running it on an already-running VM is a
+no-op. The VM persists across reboots until you `colima delete`.
+
+Other engines that work the same way (same `docker`/`docker compose` CLI, no
+Makefile changes needed):
+- **Rancher Desktop** — GUI; enable the `dockerd (moby)` runtime in settings.
+- **Podman** — `brew install podman podman-compose`, then `podman machine init && podman machine start`, then alias `docker=podman` and `docker compose=podman-compose`.
+- **OrbStack** — drop-in replacement on macOS.
+
 When that finishes you'll have the UI at <http://localhost:8000> and Grafana
 at <http://localhost:3000> (admin / admin). `make down` stops everything,
 `make clean` also wipes the Postgres volume. `make help` lists the rest.
+
+### ⚠️ Planning effort & response time — read this before your first compile
+
+The Compose form has a **Planning effort** dropdown that controls how the planner
+runs. **This directly affects how long a compile takes**, so pick the right one
+for your API key:
+
+| Effort | What it does | Model calls / drone | Use it when |
+|--------|--------------|---------------------|-------------|
+| **Fast** | one direct LLM call (no agent) | **1** | your API key has **low rate limits** — this is ~as quick as a single chat message |
+| **Balanced** (default) | a tool-calling agent that grounds the plan with geofence/battery/coverage tools | ~4–6 | you have **healthy rate limits** |
+| **Thorough** | the agent on the strongest model (Opus) | more | you have **high rate limits** and want max quality |
+
+**Important:** Balanced and Thorough make **several model calls per drone**, and a
+multi-drone group multiplies that (5 drones ≈ 30 calls in a burst). On a
+**low-rate-limit key (e.g. Anthropic tier 1) these tiers can take minutes** — the
+service is correct but spends most of that time in API rate-limit back-off
+(429s), which you'll see in `docker compose logs mts`. **That is a rate limit,
+not a bug.** For snappy responses at Balanced or above you need **high API rate
+limits**; for a constrained key, use **Fast** (and/or a light model).
+
+To make Fast the default for everyone, set `MTS_DEFAULT_PLANNING_EFFORT=fast` in
+`.env`. Per-tier models are set with `MTS_PLAN_MODEL_FAST` / `_BALANCED` /
+`_THOROUGH` (defaults are Anthropic ids — change them to match
+`MTS_LLM_PROVIDER`). See [`docs/DESIGN_DECISIONS.md` DD-017](docs/DESIGN_DECISIONS.md).
+
+> **Set your key first.** `cp .env.example .env` then set `API_KEY=` to a key
+> matching `MTS_LLM_PROVIDER` (defaults to Anthropic Claude). Without a valid key
+> every compile is rejected at the plan step.
 
 ## Architecture
 
@@ -51,10 +106,10 @@ fault). Both paths run every candidate plan through the same deterministic
 validator before anything is allowed forward.
 
 The full LangGraph diagram is in [`docs/graph.mmd`](./docs/graph.mmd). Why it
-looks the way it does (one LLM call instead of an agent, repair loop capped
-at 3, Postgres-backed approval interrupt) is in
+looks the way it does (a tool-calling planning agent with a fast single-call
+tier, repair loop capped at 3, Postgres-backed approval interrupt) is in
 [`docs/DESIGN_DECISIONS.md`](./docs/DESIGN_DECISIONS.md). What the safety
-kernel actually checks is in [`docs/SAFETY_MODEL.md`](./docs/SAFETY_MODEL.md).
+kernel actually checks is in [`docs/GUIDE.md`](./docs/GUIDE.md#the-safety-model).
 
 ## Tech stack
 
@@ -106,7 +161,7 @@ kernel actually checks is in [`docs/SAFETY_MODEL.md`](./docs/SAFETY_MODEL.md).
 
 ## Kubernetes (kind)
 
-`make kind-up` brings up a local cluster with Postgres + Redis + MTS + probes
+`make kind-up` brings up a local cluster with Postgres + Redis + Perception + probes
 + the Helm chart. The chart image is `docker-mts:latest`, so `make up` (or
 `make demo`) has to have run once first to build it.
 
@@ -129,8 +184,7 @@ eval CronJob, etc.) is in DD-011.
 
 ## Docs
 
-- [`docs/REVIEWER_GUIDE.md`](./docs/REVIEWER_GUIDE.md) — 10-minute reading path
-- [`docs/DESIGN_DECISIONS.md`](./docs/DESIGN_DECISIONS.md) — the why behind each non-trivial choice
-- [`docs/SAFETY_MODEL.md`](./docs/SAFETY_MODEL.md) — what the kernel enforces
-- [`docs/observability.md`](./docs/observability.md) — what every metric means and what its healthy range looks like
+- [`docs/GUIDE.md`](./docs/GUIDE.md) — orientation + reading paths, the safety model, and the metrics reference (for a new reader / reviewer)
+- [`docs/LANGCHAIN.md`](./docs/LANGCHAIN.md) — how the LangChain/LangGraph orchestration works, chain by chain
+- [`docs/DESIGN_DECISIONS.md`](./docs/DESIGN_DECISIONS.md) — the why behind each non-trivial choice (the decision log)
 - [`docs/graph.mmd`](./docs/graph.mmd) — full LangGraph diagram

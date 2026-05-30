@@ -102,10 +102,15 @@ def test_happy_path(geo_ctx, profile):
         _patch_engine(geo_ctx, profile)[1],
         _patch_engine(geo_ctx, profile)[2],
         _patch_engine(geo_ctx, profile)[3],
-        patch("app.graph.nodes._llm_lazy") as mock_agent,
+        patch("app.graph.nodes._llm_for"),
+        patch("app.graph.nodes.create_agent") as mock_create,
     ):
-        ai = type("AIMsg", (), {"content": plan.model_dump_json()})()
-        mock_agent.return_value.invoke.return_value = ai
+        # The plan node now drives a create_agent tool-calling agent; stub it to
+        # return the structured plan directly (no real LLM / tool calls).
+        mock_create.return_value.invoke.return_value = {
+            "messages": [],
+            "structured_response": plan,
+        }
         g = build_graph()
         out = g.invoke(
             {
@@ -168,10 +173,13 @@ def test_repair_then_reject(geo_ctx, profile):
         _patch_engine(geo_ctx, profile)[1],
         _patch_engine(geo_ctx, profile)[2],
         _patch_engine(geo_ctx, profile)[3],
-        patch("app.graph.nodes._llm_lazy") as mock_agent,
+        patch("app.graph.nodes._llm_for"),
+        patch("app.graph.nodes.create_agent") as mock_create,
     ):
-        ai = type("AIMsg", (), {"content": bad.model_dump_json()})()
-        mock_agent.return_value.invoke.return_value = ai
+        mock_create.return_value.invoke.return_value = {
+            "messages": [],
+            "structured_response": bad,
+        }
         g = build_graph()
         out = g.invoke(
             {

@@ -49,8 +49,8 @@ def plan_to_kml(plan: MissionPlan) -> str:
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<kml xmlns="http://www.opengis.net/kml/2.2">',
         "<Document>",
-        f"<name>MTS Mission {xml_escape(plan.mission_id)}</name>",
-        f"<description>Generated {xml_escape(now)} by Mission Tasking Service. "
+        f"<name>Perception Mission {xml_escape(plan.mission_id)}</name>",
+        f"<description>Generated {xml_escape(now)} by Perception. "
         f"Area={xml_escape(plan.area_id)}. Status={xml_escape(plan.status.value)}. "
         "Altitudes are AGL (relativeToGround).</description>",
         '<Style id="leg"><LineStyle><color>ff5b9bff</color><width>3</width></LineStyle></Style>',
@@ -97,8 +97,8 @@ def plan_to_gpx(plan: MissionPlan) -> str:
     now = datetime.now(UTC).isoformat()
     parts: list[str] = [
         '<?xml version="1.0" encoding="UTF-8"?>',
-        '<gpx version="1.1" creator="MTS" xmlns="http://www.topografix.com/GPX/1/1">',
-        f"<metadata><name>MTS Mission {xml_escape(plan.mission_id)}</name>"
+        '<gpx version="1.1" creator="Perception" xmlns="http://www.topografix.com/GPX/1/1">',
+        f"<metadata><name>Perception Mission {xml_escape(plan.mission_id)}</name>"
         f"<desc>Area={xml_escape(plan.area_id)}; status={xml_escape(plan.status.value)}; "
         "elevations are AGL (not MSL).</desc>"
         f"<time>{xml_escape(now)}</time></metadata>",
@@ -142,7 +142,7 @@ def plan_to_dji(plan: MissionPlan) -> str:
     Altitudes are AGL (altitudemode = 0 means relative-to-takeoff).
     """
     lines = [
-        "# MTS Mission Export — DJI Waypoint v1 / Litchi-compatible CSV",
+        "# Perception Mission Export — DJI Waypoint v1 / Litchi-compatible CSV",
         f"# mission_id={plan.mission_id} area={plan.area_id} status={plan.status.value}",
         "# Altitudes are AGL (altitudemode=0). Speed default 5 m/s.",
         "latitude,longitude,altitude(m),heading(deg),curvesize(m),rotationdir,"

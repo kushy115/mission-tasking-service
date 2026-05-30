@@ -1,7 +1,7 @@
 [project]
 name = "mission-tasking-service"
 version = "0.1.0"
-description = "Mission Tasking Service — turns natural-language operator commands into validated drone mission plans."
+description = "Perception — turns natural-language operator commands into validated drone mission plans."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

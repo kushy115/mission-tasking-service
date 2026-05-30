@@ -1,6 +1,6 @@
 apiVersion: v2
 name: mts
-description: Mission Tasking Service — schema-constrained drone mission compiler.
+description: Perception — schema-constrained drone mission compiler.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

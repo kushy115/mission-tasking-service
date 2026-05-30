@@ -27,6 +27,7 @@ from app.schemas.plan import ConstraintReport, MissionLeg, MissionPlan, Waypoint
 from app.validation.physics import (
     DroneProfile,
     estimate_mission,
+    haversine_m,
     sensor_swath_m,
 )
 from app.weather import WeatherObservation
@@ -41,6 +42,7 @@ class GeoContext:
     nfz_polygons: tuple[Polygon, ...]
     altitude_ceiling_m: float
     home_point: tuple[float, float]  # (lon, lat)
+    home_bases: tuple[tuple[float, float], ...] = ()  # registered bases, each (lon, lat)
 
 
 def _wp_point(wp: Waypoint) -> Point:
@@ -139,38 +141,69 @@ def _sensor_coverage_ok(plan: MissionPlan, profile: DroneProfile) -> tuple[bool,
             continue
         min_alt = min(wp.alt_m for wp in leg.geometry)
         swath = sensor_swath_m(sensor, min_alt)
-        # Estimate track spacing on a serpentine geometry of the form:
-        #   [W0=(W,lat0), W1=(E,lat0),   # track 1 — along-track hop
-        #    W2=(E,lat1), W3=(W,lat1),   # track 2 — along-track hop
-        #    ...]
-        # The *along-track* hops are W0→W1, W2→W3, … at EVEN indices.
-        # The *perpendicular* track-to-track hops are W1→W2, W3→W4, … at ODD
-        # indices — those are what we want for spacing. Previous version used
-        # range(0, …, 2) which measured the along-track length and falsely
-        # rejected every deterministically-generated lawnmower. See DD-010.
-        from app.validation.physics import haversine_m
+        # Measure track spacing by clustering waypoints into east-west ROWS by
+        # latitude, then taking the median gap between consecutive row centers.
+        #
+        # The old method assumed a clean 2-waypoints-per-track serpentine and
+        # read odd-indexed hops as the perpendicular spacing. That breaks for
+        # NFZ-aware patterns: when a track is split by a no-fly zone (or detour
+        # waypoints are inserted to route around one) the per-row waypoint count
+        # is variable, so the odd/even indices no longer line up with the
+        # perpendicular hops and it reports a bogus spacing. Clustering by
+        # latitude is robust to variable-length rows and NFZ detours. We use the
+        # MEDIAN gap so a few large jumps (e.g. skirting an NFZ) don't dominate —
+        # coverage gaps that fall inside a no-fly zone are unavoidable and not a
+        # real sensing failure. See DD-010.
+        from app.geo.patterns import METERS_PER_DEG_LAT  # noqa: PLC0415
 
-        hops = [
-            haversine_m(leg.geometry[i], leg.geometry[i + 1])
-            for i in range(1, len(leg.geometry) - 1, 2)
-        ]
-        if not hops:
+        lats = sorted({round(wp.lat, 6) for wp in leg.geometry})
+        # Merge lats within ~2m into the same row.
+        row_merge_deg = 2.0 / METERS_PER_DEG_LAT
+        rows: list[float] = []
+        for lat in lats:
+            if not rows or (lat - rows[-1]) > row_merge_deg:
+                rows.append(lat)
+        if len(rows) < 2:
             continue
-        mean_spacing = sum(hops) / len(hops)
-        if mean_spacing > swath:
+        gaps_m = sorted(
+            (rows[i + 1] - rows[i]) * METERS_PER_DEG_LAT for i in range(len(rows) - 1)
+        )
+        mid = len(gaps_m) // 2
+        median_spacing = (
+            gaps_m[mid] if len(gaps_m) % 2 == 1 else (gaps_m[mid - 1] + gaps_m[mid]) / 2.0
+        )
+        if median_spacing > swath:
             bad.append(
-                f"leg[{li}] track spacing {mean_spacing:.1f}m exceeds sensor swath "
+                f"leg[{li}] track spacing {median_spacing:.1f}m exceeds sensor swath "
                 f"{swath:.1f}m at {min_alt:.0f}m AGL — coverage gap"
             )
     return (not bad, bad)
 
 
-def _ends_with_rtb(plan: MissionPlan) -> tuple[bool, str]:
+def _ends_with_rtb(
+    plan: MissionPlan, home_bases: tuple[tuple[float, float], ...]
+) -> tuple[bool, str]:
     if not plan.legs:
         return False, "plan has zero legs"
     last = plan.legs[-1]
     if last.leg_type != LegType.RETURN_TO_BASE:
         return False, f"last leg is {last.leg_type.value}, expected RETURN_TO_BASE"
+    if not last.geometry:
+        return False, "RETURN_TO_BASE leg has no waypoints"
+    final_wp = last.geometry[-1]
+    if not home_bases:
+        return False, "no registered home bases available for RETURN_TO_BASE check"
+    distances = [
+        haversine_m(final_wp, Waypoint(lat=lat, lon=lon, alt_m=final_wp.alt_m))
+        for lon, lat in home_bases
+    ]
+    nearest_m = min(distances)
+    tolerance_m = 5.0
+    if nearest_m > tolerance_m:
+        return (
+            False,
+            f"final RETURN_TO_BASE waypoint is {nearest_m:.1f}m from nearest registered home base",
+        )
     return True, "ok"
 
 
@@ -251,7 +284,8 @@ def validate_plan(
     cov_ok, cov_bad = _sensor_coverage_ok(plan, profile)
     violations.extend(cov_bad)
 
-    rtb_ok, rtb_detail = _ends_with_rtb(plan)
+    home_bases = geo.home_bases or (geo.home_point,)
+    rtb_ok, rtb_detail = _ends_with_rtb(plan, home_bases)
     if not rtb_ok:
         violations.append(rtb_detail)
 

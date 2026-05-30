@@ -21,6 +21,16 @@ class Settings(BaseSettings):
     llm_max_tokens: int = Field(4096, alias="MTS_LLM_MAX_TOKENS")
     llm_timeout_s: int = Field(60, alias="MTS_LLM_TIMEOUT_S")
 
+    # Planning-effort tiers (see app/graph/nodes.py _effort_config). The tier
+    # changes only the model + whether the tool-calling agent runs; all safety
+    # calculations are identical across tiers. "fast" = 1 direct call (rate-limit
+    # friendly), "balanced"/"thorough" = grounding agent on bigger models.
+    # A blank model falls back to MTS_LLM_MODEL.
+    default_planning_effort: str = Field("balanced", alias="MTS_DEFAULT_PLANNING_EFFORT")
+    plan_model_fast: str = Field("claude-haiku-4-5", alias="MTS_PLAN_MODEL_FAST")
+    plan_model_balanced: str = Field("", alias="MTS_PLAN_MODEL_BALANCED")
+    plan_model_thorough: str = Field("claude-opus-4-8", alias="MTS_PLAN_MODEL_THOROUGH")
+
     repair_loop_cap: int = Field(3, alias="MTS_REPAIR_LOOP_CAP")
     battery_reserve_min_pct: float = Field(20.0, alias="MTS_BATTERY_RESERVE_MIN_PCT")
     min_agl_m: float = Field(20.0, alias="MTS_MIN_AGL_M")

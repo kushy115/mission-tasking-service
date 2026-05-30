@@ -3,7 +3,8 @@
 Edges:
   intake → plan | clarify | reject
   plan → validate
-  validate → finalize | repair | clarify | reject
+  validate → advisor | repair | clarify | reject
+  advisor → finalize
   repair → plan
   clarify → finalize → END
   reject  → finalize → END
@@ -25,7 +26,6 @@ from app.config import get_settings
 from app.graph.nodes import (
     advisor_node,
     clarify_node,
-    critique_node,
     finalize_node,
     intake_node,
     plan_node,
@@ -55,7 +55,7 @@ def _after_validate(state: CompileState) -> str:
     surfaced directly. Otherwise, if there are violations and we have repair
     budget, loop. If repair budget is exhausted, reject.
 
-    Successful plans go through `critique` (advisory) before `finalize`.
+    Successful plans go through `advisor` (advisory) before `finalize`.
     """
     settings = get_settings()
     raw = state.get("draft_plan") or {}
@@ -67,7 +67,7 @@ def _after_validate(state: CompileState) -> str:
 
     errors = state.get("validation_errors") or []
     if not errors:
-        return "critique"
+        return "advisor"
 
     if state.get("repair_attempts", 0) >= settings.repair_loop_cap:
         return "reject"
@@ -86,7 +86,6 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g.add_node("intake", intake_node)
     g.add_node("plan", plan_node)
     g.add_node("validate", validate_node)
-    g.add_node("critique", critique_node)
     g.add_node("advisor", advisor_node)
     g.add_node("repair", repair_node)
     g.add_node("clarify", clarify_node)
@@ -102,15 +101,14 @@ def build_graph(checkpointer: Any | None = None) -> Any:
         "validate",
         _after_validate,
         {
-            "critique": "critique",
+            "advisor": "advisor",
             "repair": "repair",
             "clarify": "clarify",
             "reject": "reject",
         },
     )
-    # critique → advisor → finalize. Both advisor and critique are pure-additive
-    # passes; failure inside either node is logged and absorbed (see nodes.py).
-    g.add_edge("critique", "advisor")
+    # advisor → finalize. The advisor is pure-additive; failure inside the node
+    # is logged and absorbed (see nodes.py).
     g.add_edge("advisor", "finalize")
     g.add_edge("repair", "plan")
     g.add_edge("clarify", "finalize")

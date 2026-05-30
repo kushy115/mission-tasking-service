@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,7 +24,6 @@ from starlette.responses import Response
 
 from app.api.routes import router as api_router
 from app.config import get_settings
-from app.graph.builder import build_graph
 from app.observability.logging import configure_logging
 from app.observability.metrics import register_metrics_middleware
 from app.observability.tracing import configure_tracing
@@ -37,6 +37,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging(settings.log_level)
     configure_tracing(app)
     log.info("compiling mission graph", extra={"env": settings.env})
+    if os.getenv("MTS_SKIP_GRAPH_STARTUP") == "1":
+        app.state.compile_graph = None
+        log.info("mission graph startup skipped")
+        yield
+        return
 
     # Prefer Postgres checkpointing in production; fall back to in-memory if the
     # checkpoint connection cannot be established (e.g. local dev without DB).
@@ -54,6 +59,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as e:  # noqa: BLE001
         log.warning("Postgres checkpointing unavailable, using MemorySaver: %s", e)
 
+    from app.graph.builder import build_graph
+
     app.state.compile_graph = build_graph(checkpointer=checkpointer)
     log.info("startup complete")
     try:
@@ -66,7 +73,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Mission Tasking Service",
+        title="Perception",
         version="0.1.0",
         description="Compiles natural-language operator commands into validated drone mission plans.",
         lifespan=lifespan,
@@ -82,64 +89,52 @@ def create_app() -> FastAPI:
     async def mission_sim_socket(
         websocket: WebSocket,
         mission_id: str,
-        speed: float = 10.0,
-        session_id: str = "",
+        speed: float = 20.0,
     ) -> None:
-        """Live telemetry stream for a saved mission.
+        """Live telemetry stream for a saved mission (DD-§10).
 
-        Telemetry path is DD-§10. When `session_id` is supplied (the UI does so
-        by default), the stream is wrapped by the inflight supervisor (DD-014)
-        so that events injected via `POST /v1/missions/{id}/sim:inject` can
-        trigger CONTINUE / RTB / REPLAN / EMERGENCY_LAND decisions live.
+        The server walks the plan tick-by-tick against the same physics model the
+        validator uses and emits flat-JSON telemetry frames. `speed` is the time-
+        compression factor. For multi-drone group missions the UI opens one socket
+        per drone so they animate in parallel.
         """
-        from app.geo.store import get_engine, load_drone_profile, load_geo_context, load_mission
+        from app.geo.store import (
+            get_engine,
+            load_drone_profile,
+            load_geo_context,
+            load_mission_detail,
+        )
         from app.schemas.plan import MissionPlan
         from app.sim.stream import telemetry_stream
-        from app.supervisor.orchestrator import live_mission_session
 
         await websocket.accept()
         try:
-            raw = load_mission(get_engine(), mission_id)
-            if raw is None:
+            detail = load_mission_detail(get_engine(), mission_id)
+            if detail is None:
                 await websocket.send_json({"error": f"mission {mission_id} not found"})
                 await websocket.close()
                 return
-            plan = MissionPlan.model_validate(raw)
-            # Production would persist the drone profile with the plan; for the
-            # demo we use the long-endurance default.
-            drone_profile_id = "long-endurance-quad"
-            profile = load_drone_profile(get_engine(), drone_profile_id)
+            plan = MissionPlan.model_validate(detail["plan"])
+            # Re-fly against the SAME airframe the plan was compiled for — using
+            # the wrong profile makes cruise speed / battery diverge and the
+            # animation no longer matches the actual plan.
+            profile_id = detail.get("drone_profile_id") or "long-endurance-quad"
+            try:
+                profile = load_drone_profile(get_engine(), profile_id)
+            except Exception:  # noqa: BLE001 — profile renamed/removed; fall back
+                profile = load_drone_profile(get_engine(), "long-endurance-quad")
             try:
                 geo = load_geo_context(get_engine(), plan.area_id)
             except Exception:  # noqa: BLE001
                 geo = None
-            speed = max(0.5, min(float(speed or 10.0), 100.0))
+            speed = max(0.5, min(float(speed or 20.0), 200.0))
 
-            if session_id:
-                # Supervised path: orchestrator owns the queue + plan swapping.
-                async for frame in live_mission_session(
-                    mission_id=mission_id,
-                    session_id=session_id,
-                    plan=plan,
-                    profile=profile,
-                    geo=geo,
-                    area_id=plan.area_id,
-                    drone_profile_id=drone_profile_id,
-                    speed=speed,
-                ):
-                    try:
-                        await websocket.send_json(frame)
-                    except Exception:  # noqa: BLE001
-                        log.info("ws sim stream send failed; closing")
-                        return
-            else:
-                # Legacy unsupervised path (back-compat for callers w/o session_id).
-                async for tframe in telemetry_stream(plan, profile, geo, speed=speed):
-                    try:
-                        await websocket.send_json({"kind": "telemetry", **tframe.to_dict()})
-                    except Exception:  # noqa: BLE001
-                        log.info("ws sim stream send failed; closing")
-                        return
+            async for tframe in telemetry_stream(plan, profile, geo, speed=speed):
+                try:
+                    await websocket.send_json({"kind": "telemetry", **tframe.to_dict()})
+                except Exception:  # noqa: BLE001
+                    log.info("ws sim stream send failed; closing")
+                    return
         except WebSocketDisconnect:
             log.info("ws sim stream client disconnected")
         finally:

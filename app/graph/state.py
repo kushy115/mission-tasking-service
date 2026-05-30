@@ -20,6 +20,9 @@ class CompileState(TypedDict, total=False):
     area_id: str
     operator_clearance: str
     drone_state: dict[str, Any]
+    # Sensors the operator explicitly enabled in the UI (subset of {EO, IR}).
+    # The planner constrains leg sensor_mode to this set; empty = default (EO).
+    selected_sensors: list[str]
     request_id: str | None
     geo_context: dict[str, Any]  # boundary, nfzs, ceiling, home — serialized
     weather: dict[str, Any] | None  # WeatherObservation dict; see weather/provider.py
@@ -34,15 +37,17 @@ class CompileState(TypedDict, total=False):
     # Captured by validate_node, persisted by finalize_node. Powers the UI
     # diff view; see docs/DESIGN_DECISIONS.md#DD-003.
     repair_drafts: list[dict[str, Any]]
-    confidence_score: float | None  # set by critique node; see DESIGN_DECISIONS §6
-    critique_notes: str
     # Set by the advisor node — a list of optimization suggestions + an optional
     # resource-constrained fallback. Advisory only; never blocks approval.
     advisory: dict[str, Any] | None
     alternatives: list[dict[str, Any]]  # extra plans; see DESIGN_DECISIONS §7
     primary_idx: int
     alternatives_requested: bool
+    # Planning-effort tier: "fast" | "balanced" | "thorough". Empty/None → the
+    # server default (config.default_planning_effort). See nodes._effort_config.
+    planning_effort: str
     multi_drone_slot: dict[str, Any] | None  # see DESIGN_DECISIONS §9
+    assigned_home: tuple[float, float] | list[float] | None  # per-drone base, (lon, lat)
     _deconfliction: tuple[bool, list[str]] | None  # see DESIGN_DECISIONS §8
     # Operator chat thread carried between compiles when the planner returned
     # NEEDS_CLARIFICATION. Each entry is {role: "user"|"assistant", content: str}.

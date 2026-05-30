@@ -1,0 +1,50 @@
+{
+  "type": "FeatureCollection",
+  "name": "west_city",
+  "properties": {
+    "area_id": "west-city",
+    "description": "Urban operating area with multiple launch bases for multi-drone demonstrations.",
+    "ceiling_m": 120.0
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "role": "boundary",
+        "home": [-74.1950, 40.7110],
+        "home_bases": [
+          [-74.1950, 40.7110],
+          [-74.1850, 40.7100],
+          [-74.1750, 40.7270]
+        ]
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-74.1950, 40.7100],
+          [-74.1750, 40.7100],
+          [-74.1750, 40.7280],
+          [-74.1950, 40.7280],
+          [-74.1950, 40.7100]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "role": "nfz",
+        "name": "medical_center"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-74.1875, 40.7180],
+          [-74.1845, 40.7180],
+          [-74.1845, 40.7210],
+          [-74.1875, 40.7210],
+          [-74.1875, 40.7180]
+        ]]
+      }
+    }
+  ]
+}

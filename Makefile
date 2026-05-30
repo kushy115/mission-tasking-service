@@ -52,7 +52,7 @@ demo: up seed compile-sample ## bring up stack, seed data, compile a sample miss
 	@echo "  UI:         http://localhost:8000"
 	@echo "  Grafana:    http://localhost:3000  (admin / admin)"
 	@echo "  Prometheus: http://localhost:9090"
-	@echo "  Docs:       open docs/REVIEWER_GUIDE.md"
+	@echo "  Docs:       open docs/GUIDE.md"
 
 .PHONY: up
 up: ## docker compose up (MTS + Postgres + Redis + OTel + Prometheus + Grafana)
@@ -83,8 +83,23 @@ seed: ## load data/areas + data/drones into Postgres
 compile-sample: ## POST a sample command to /v1/missions:compile
 	@curl -s http://localhost:8000/v1/missions:compile \
 		-H 'content-type: application/json' \
-		-d '{"command":"$(SAMPLE_COMMAND)","area_id":"$(SAMPLE_AREA)","drone_state":{"drone_profile_id":"$(SAMPLE_DRONE)","battery_pct":100}}' \
+		-d '{"command":"$(SAMPLE_COMMAND)","area_id":"$(SAMPLE_AREA)","drone_state":{"drone_profile_id":"$(SAMPLE_DRONE)","battery_pct":100},"planning_effort":"fast"}' \
 		| python -m json.tool
+
+# --- colima (Docker-Desktop-free engine) -------------------------------------
+
+.PHONY: colima-up
+colima-up: ## start a local Colima VM so docker/compose work without Docker Desktop
+	@command -v colima >/dev/null || { echo "colima not installed — run: brew install colima docker docker-compose"; exit 1; }
+	@if colima status >/dev/null 2>&1; then \
+		echo "colima already running"; \
+	else \
+		colima start --cpu 4 --memory 6 --disk 30; \
+	fi
+
+.PHONY: colima-down
+colima-down: ## stop the Colima VM
+	colima stop
 
 # --- evals -------------------------------------------------------------------
 

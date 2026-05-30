@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>MTS — Mission Tasking Service</title>
+  <title>Perception</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
@@ -548,6 +548,36 @@
     }
     .stat .sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
 
+    /* Multi-drone: prominent per-drone stat cards + a compact fleet-average strip. */
+    .drone-card {
+      background: var(--hairline); border-radius: var(--r-sm);
+      padding: 9px 11px; margin-bottom: 7px;
+    }
+    .drone-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .drone-card-head .dot { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+    .drone-card-head .name { font-size: 13px; font-weight: 600; color: var(--fg); }
+    .drone-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .drone-stat .lbl {
+      font-size: 9px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.05em; font-weight: 600;
+    }
+    .drone-stat .val {
+      font-size: 16px; font-weight: 600; color: var(--fg); margin-top: 2px;
+      letter-spacing: -0.02em; font-feature-settings: 'tnum';
+    }
+    .drone-stat .val .u { font-size: 10px; color: var(--muted); font-weight: 500; }
+    .fleet-avg {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 5px 14px;
+      background: var(--hairline); border-radius: var(--r-sm);
+      padding: 8px 11px; margin-bottom: 14px;
+    }
+    .fleet-avg .fa-label {
+      font-size: 9px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.06em; font-weight: 700; margin-right: 2px;
+    }
+    .fleet-avg .fa-item { font-size: 11px; color: var(--fg-dim); font-feature-settings: 'tnum'; }
+    .fleet-avg .fa-item b { color: var(--fg); font-weight: 600; }
+
     .section { margin: 14px 0; }
     .section-title {
       font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
@@ -580,7 +610,7 @@
     .toast.err { background: var(--err-soft); color: var(--err); border: 1px solid rgba(255, 69, 58, 0.28); }
 
     /* ===================================================================
-       ADVISOR — suggestion cards under critique
+       ADVISOR — compact suggestion cards
        =================================================================== */
     .advisor-card {
       background: var(--hairline);
@@ -745,6 +775,10 @@
       width: 280px; z-index: 1100;
       padding: 16px;
       display: none;
+      /* Keep the panel within the viewport so Save/Cancel stay reachable when
+         the coordinate-entry section expands past the window height. */
+      max-height: calc(100vh - 96px);
+      overflow-y: auto;
     }
     .editor-panel.open { display: block; }
     .editor-panel h3 {
@@ -761,16 +795,36 @@
       font-family: 'JetBrains Mono', monospace;
       color: var(--fg-dim);
     }
-    /* leaflet.draw dark polish */
-    .leaflet-draw-toolbar {
-      margin-top: 76px !important;
-      margin-left: 16px !important;
+    /* leaflet.draw — we drive draw modes from labeled buttons in the editor
+       panel (see #draw-boundary-btn etc.), so the default tiny toolbar is
+       hidden. The handlers themselves are still used; only the UI is replaced. */
+    .leaflet-draw.leaflet-control { display: none !important; }
+
+    /* Editor draw-action buttons (explicit, labeled). */
+    .draw-actions {
+      display: grid; gap: 6px; margin-bottom: 10px;
     }
-    .leaflet-draw-toolbar a {
-      background-color: var(--surface-2) !important;
-      backdrop-filter: var(--blur);
-      border: 1px solid var(--hairline) !important;
-      filter: invert(0.85);
+    .draw-actions .btn {
+      justify-content: flex-start;
+      font-size: 12px;
+      padding: 8px 10px;
+      gap: 8px;
+    }
+    .draw-actions .btn .step {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 18px; height: 18px; border-radius: 50%;
+      background: var(--hairline-2); color: var(--fg-dim);
+      font-size: 10px; font-weight: 600;
+    }
+    .draw-actions .btn.done .step {
+      background: #28a76533; color: #6ee7a7;
+    }
+    .draw-actions .btn.active {
+      outline: 1px solid var(--accent);
+      background: var(--surface-2);
+    }
+    .draw-actions .btn[disabled] {
+      opacity: 0.45; cursor: not-allowed;
     }
 
     /* ===================================================================
@@ -842,10 +896,99 @@
     /* responsive — narrow screens collapse to bottom-sheet style */
     @media (max-width: 880px) {
       .side-panel { width: calc(100vw - 28px); }
-      .compose-card { left: 14px; right: 14px; bottom: 14px; top: auto; max-height: 60vh; }
+      .compose-card { left: 14px; right: 14px; top: 80px; bottom: 14px; max-height: none; }
       .result-card { left: 14px; right: 14px; top: 80px; bottom: 14px; width: auto; }
+      .editor-toolbar { display: none; }
       .legend { display: none; }
     }
+
+    /* ===================================================================
+       FLAIR — display type, animated logo, refined accents (cosmetic only)
+       =================================================================== */
+    .brand-name, .panel-head h2, .modal h3, .section-title,
+    .stat .val, .quick-starts-label, .empty-state {
+      font-family: 'Space Grotesk', 'Inter', -apple-system, system-ui, sans-serif;
+    }
+    .brand-name {
+      font-weight: 600; font-size: 14px; letter-spacing: -0.02em;
+      background: linear-gradient(180deg, #ffffff 0%, #c9d4e6 100%);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .section-title {
+      background: linear-gradient(90deg, var(--fg-dim), var(--muted));
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .stat .val { letter-spacing: -0.03em; }
+
+    /* Animated quadcopter logo */
+    .brand-mark {
+      position: relative;
+      width: 34px; height: 34px; border-radius: 11px;
+      background:
+        radial-gradient(120% 120% at 30% 20%, rgba(255,255,255,0.28), transparent 55%),
+        linear-gradient(135deg, #0a84ff 0%, #7c5cff 60%, #b15cff 100%);
+      box-shadow:
+        0 4px 18px rgba(10,132,255,0.45),
+        0 0 0 1px rgba(255,255,255,0.10) inset;
+      overflow: hidden;
+    }
+    .brand-mark::after {
+      content: ''; position: absolute; inset: -40%;
+      background: conic-gradient(from 0deg, transparent 0 70%, rgba(255,255,255,0.35) 82%, transparent 92%);
+      animation: brandSweep 5.5s linear infinite;
+    }
+    .brand-mark svg { position: relative; z-index: 1; width: 22px; height: 22px; }
+    .brand-ping {
+      position: absolute; z-index: 2; right: 4px; top: 4px;
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #30d158; box-shadow: 0 0 0 0 rgba(48,209,88,0.6);
+      animation: pingPulse 2.4s ease-out infinite;
+    }
+    @keyframes brandSweep { to { transform: rotate(1turn); } }
+    @keyframes pingPulse {
+      0%   { box-shadow: 0 0 0 0 rgba(48,209,88,0.55); }
+      70%  { box-shadow: 0 0 0 7px rgba(48,209,88,0); }
+      100% { box-shadow: 0 0 0 0 rgba(48,209,88,0); }
+    }
+    .brand:hover .brand-mark { transform: translateY(-1px); transition: transform 0.2s ease; }
+
+    /* Live-health dot gets a gentle pulse when healthy */
+    .status-pill .dot.ok { animation: pingPulse 2.8s ease-out infinite; }
+
+    /* Soft accent glow bleeding from each panel header */
+    .panel-head { position: relative; }
+    .panel-head::before {
+      content: ''; position: absolute; left: 0; right: 0; top: 0; height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0.5;
+    }
+
+    /* Topbar hairline sheen */
+    .topbar { position: relative; }
+    .topbar::after {
+      content: ''; position: absolute; left: 10%; right: 10%; bottom: -1px; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent);
+    }
+
+    /* Primary button: animated sheen sweep on hover */
+    .btn-primary { position: relative; overflow: hidden; }
+    .btn-primary::after {
+      content: ''; position: absolute; top: 0; bottom: 0; left: -60%; width: 40%;
+      background: linear-gradient(100deg, transparent, rgba(255,255,255,0.28), transparent);
+      transform: skewX(-18deg); transition: none;
+    }
+    .btn-primary:hover:not(:disabled)::after { animation: btnSheen 0.7s ease; }
+    @keyframes btnSheen { from { left: -60%; } to { left: 130%; } }
+
+    /* Quick-start cards: accent-tinted hover */
+    .quick-start:hover { border-color: var(--accent-soft); box-shadow: 0 6px 18px rgba(0,0,0,0.25); }
+    .quick-start:hover .qs-icon { background: var(--accent); color: #fff; }
+
+    /* Panels rise in on first paint */
+    .compose-card, .result-card:not(.hidden) { animation: panelIn 0.35s cubic-bezier(0.22,1,0.36,1) both; }
+    @keyframes panelIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
   </style>
 </head>
 <body>
@@ -858,10 +1001,21 @@
 <!-- ===== Top bar (floating glass) ===== -->
 <header class="topbar glass">
   <div class="brand">
-    <div class="brand-mark">M</div>
+    <div class="brand-mark" aria-label="Perception">
+      <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <!-- Perception: an eye with a layered iris (optics / all-seeing) -->
+        <g stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 16C7 9.5 11 6.5 16 6.5S25 9.5 29 16C25 22.5 21 25.5 16 25.5S7 22.5 3 16Z"/>
+          <circle cx="16" cy="16" r="6"/>
+        </g>
+        <circle cx="16" cy="16" r="2.6" fill="#fff" stroke="none"/>
+        <circle cx="19.2" cy="12.8" r="1" fill="#fff" stroke="none"/>
+      </svg>
+      <span class="brand-ping"></span>
+    </div>
     <div class="brand-text">
-      <span class="brand-name">Mission Tasking</span>
-      <span class="brand-sub">Operator console</span>
+      <span class="brand-name">Perception</span>
+      <span class="brand-sub">Drone mission console</span>
     </div>
   </div>
   <div class="topbar-actions">
@@ -913,7 +1067,7 @@
       <label class="toggle-row" style="margin-top: 10px;">
         <span class="toggle-text">
           <span class="toggle-title">Multi-drone group</span>
-          <span class="toggle-sub">Coordinate two or more drones at staggered altitudes</span>
+          <span class="toggle-sub">Coordinate one or more drones at staggered altitudes</span>
         </span>
         <span class="toggle">
           <input type="checkbox" id="multi-drone" />
@@ -921,8 +1075,32 @@
         </span>
       </label>
       <div class="md-picker" id="multi-drone-picker">
-        <div class="md-hint">Pick 2 or more drones. Server assigns altitude layers automatically (40 m, 70 m, 100 m).</div>
-        <div class="md-chips" id="multi-drone-chips"></div>
+        <label class="toggle-row" style="margin-top: 0;">
+          <span class="toggle-text">
+            <span class="toggle-title">Auto-plan fleet</span>
+            <span class="toggle-sub">LLM picks how many drones and which profiles to use</span>
+          </span>
+          <span class="toggle">
+            <input type="checkbox" id="md-auto" checked />
+            <span class="toggle-track"></span>
+          </span>
+        </label>
+
+        <div class="md-auto-controls" id="md-auto-controls">
+          <div class="md-hint">Drag the slider to bias the LLM. Fewer drones is more conservative; faster means more drones in parallel.</div>
+          <div class="range-row" style="margin-top: 6px;">
+            <input type="range" id="md-bias" min="0" max="100" value="50" />
+            <span class="range-val" id="md-bias-val">balanced</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:-2px;">
+            <span>Fewer drones</span><span>Faster mission</span>
+          </div>
+        </div>
+
+        <div class="md-manual-controls" id="md-manual-controls" style="display:none;">
+          <div class="md-hint">Pick 1 or more drones. Server assigns altitude layers (40 m, 70 m, 100 m, …).</div>
+          <div class="md-chips" id="multi-drone-chips"></div>
+        </div>
       </div>
     </div>
 
@@ -935,6 +1113,35 @@
         <input type="range" id="battery" min="20" max="100" value="100" />
         <span class="range-val" id="batteryVal">100%</span>
       </div>
+    </div>
+
+    <div class="field">
+      <label class="field-label">
+        Sensors
+        <span class="hint">If none selected, the planner defaults to EO.</span>
+      </label>
+      <div style="display:flex; gap:16px; align-items:center; margin-top:4px;">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;">
+          <input type="checkbox" id="sensor-eo" />
+          <span>EO (visual)</span>
+        </label>
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;">
+          <input type="checkbox" id="sensor-ir" />
+          <span>IR (thermal)</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="field-label" for="planning-effort">
+        Planning effort
+        <span class="hint">Fewer model calls = faster &amp; rate-limit friendly</span>
+      </label>
+      <select id="planning-effort">
+        <option value="fast">Fast — 1 model call, light model (rate-limit friendly)</option>
+        <option value="balanced" selected>Balanced — grounding agent (default)</option>
+        <option value="thorough">Thorough — agent on the strongest model</option>
+      </select>
     </div>
 
     <div class="field">
@@ -1019,7 +1226,40 @@
 </div>
 <div class="editor-panel glass" id="editor-panel">
   <h3>Area editor</h3>
-  <div class="editor-hint">1. Draw a polygon (boundary).<br>2. Optionally draw no-fly polygons.<br>3. Drop a marker as home base.</div>
+  <div class="editor-hint">Click a button, then click on the map to place points. Double-click (or click the first point) to finish a polygon.</div>
+  <div class="draw-actions">
+    <button id="draw-boundary-btn" class="btn btn-ghost" title="Draw the outer operating-area boundary">
+      <span class="step">1</span><span>Draw boundary</span>
+    </button>
+    <button id="draw-nfz-btn" class="btn btn-ghost" disabled title="Optional: draw one or more no-fly polygons inside the boundary">
+      <span class="step">2</span><span>Add no-fly zone</span>
+    </button>
+    <button id="draw-home-btn" class="btn btn-ghost" disabled title="Drop one or more home/base markers (server will snap each to the boundary)">
+      <span class="step">3</span><span>Add home base</span>
+    </button>
+    <button id="clear-area-btn" class="btn btn-ghost" disabled title="Clear all drawn shapes and start over" style="font-size:11px; padding:6px 10px;">
+      <span class="step">↺</span><span>Clear</span>
+    </button>
+  </div>
+  <details id="coords-section" style="margin-bottom: 10px;">
+    <summary style="cursor:pointer; font-size:12px; color:var(--fg-dim); user-select:none;">Enter coordinates</summary>
+    <div style="margin-top: 8px;">
+      <div class="editor-hint" style="margin-bottom:6px;">Type <code>lon, lat</code> (GeoJSON order) — one pair per line. Spaces or commas accepted.</div>
+      <div class="field">
+        <label class="field-label" for="coords-boundary">Boundary vertices (≥3 lines)</label>
+        <textarea id="coords-boundary" rows="4" placeholder="-122.401, 37.793&#10;-122.398, 37.793&#10;-122.398, 37.790"></textarea>
+      </div>
+      <div class="field">
+        <label class="field-label" for="coords-nfz">No-fly zones (blank line between zones)</label>
+        <textarea id="coords-nfz" rows="4" placeholder="-122.400, 37.792&#10;-122.399, 37.792&#10;-122.399, 37.791&#10;&#10;-122.3985, 37.7915&#10;..."></textarea>
+      </div>
+      <div class="field">
+        <label class="field-label" for="coords-home">Home base(s) (≥1 line)</label>
+        <textarea id="coords-home" rows="2" placeholder="-122.400, 37.791"></textarea>
+      </div>
+      <button id="apply-coords-btn" class="btn btn-ghost btn-block" style="font-size:12px;">Apply coordinates</button>
+    </div>
+  </details>
   <div class="field">
     <label class="field-label" for="new-area-id">Area ID</label>
     <input type="text" id="new-area-id" placeholder="e.g. north-field" />
@@ -1209,6 +1449,25 @@ window.addEventListener('DOMContentLoaded', () => {
     $('multi-drone-picker').classList.toggle('open', e.target.checked);
   });
 
+  function _biasLabel(v) {
+    if (v <= 15) return 'min drones';
+    if (v <= 40) return 'fewer drones';
+    if (v <= 60) return 'balanced';
+    if (v <= 85) return 'faster';
+    return 'max speed';
+  }
+  function _refreshMdMode() {
+    const auto = $('md-auto').checked;
+    $('md-auto-controls').style.display = auto ? '' : 'none';
+    $('md-manual-controls').style.display = auto ? 'none' : '';
+  }
+  $('md-auto').addEventListener('change', _refreshMdMode);
+  $('md-bias').addEventListener('input', (e) => {
+    $('md-bias-val').textContent = _biasLabel(+e.target.value);
+  });
+  _refreshMdMode();
+  $('md-bias-val').textContent = _biasLabel(+$('md-bias').value);
+
   // ----- draw area
   function drawAreaOnMap(area) {
     if (areaLayer) map.removeLayer(areaLayer);
@@ -1221,9 +1480,14 @@ window.addEventListener('DOMContentLoaded', () => {
     area.nfzs.forEach((nfz, i) => layers.push(L.geoJSON(nfz, {
       style: { color: '#ef6764', weight: 2, fillOpacity: 0.18, opacity: 0.95 }
     }).bindTooltip(`No-fly zone ${i+1}`, { sticky: true })));
-    layers.push(L.circleMarker([area.home_lat, area.home_lon], {
-      radius: 7, color: '#4ade80', fillColor: '#4ade80', fillOpacity: 1, weight: 2
-    }).bindTooltip('Home base', { permanent: false }));
+    const bases = (area.home_bases && area.home_bases.length)
+      ? area.home_bases
+      : [[area.home_lon, area.home_lat]];
+    bases.forEach((base, i) => {
+      layers.push(L.circleMarker([base[1], base[0]], {
+        radius: 7, color: '#4ade80', fillColor: '#4ade80', fillOpacity: 1, weight: 2
+      }).bindTooltip(`Home base ${i + 1}`, { permanent: false }));
+    });
     areaLayer = L.layerGroup(layers).addTo(map);
     map.fitBounds(L.geoJSON(area.boundary).getBounds(), { padding: [80, 420] });
   }
@@ -1342,6 +1606,15 @@ window.addEventListener('DOMContentLoaded', () => {
   // ----- compile
   function showResult() { resultCard.classList.remove('hidden'); }
 
+  // Collect the operator's explicit sensor selection for the compile payload.
+  // Empty array = no explicit selection (backend defaults to EO).
+  function selectedSensors() {
+    const s = [];
+    if ($('sensor-eo').checked) s.push('EO');
+    if ($('sensor-ir').checked) s.push('IR');
+    return s;
+  }
+
   compileBtn.addEventListener('click', async () => {
     const cmd = command.value.trim();
     if (!cmd) { command.focus(); return; }
@@ -1359,7 +1632,9 @@ window.addEventListener('DOMContentLoaded', () => {
       </div>`;
 
     try {
-      const groupIds = $('multi-drone').checked
+      const mdOn = $('multi-drone').checked;
+      const mdAuto = mdOn && $('md-auto').checked;
+      const groupIds = (mdOn && !mdAuto)
         ? Array.from(document.querySelectorAll('.md-chip.selected')).map(c => c.dataset.id)
         : null;
       const payload = {
@@ -1368,9 +1643,14 @@ window.addEventListener('DOMContentLoaded', () => {
         operator_clearance: 'STANDARD',
         drone_state: { drone_profile_id: droneSel.value, battery_pct: +battery.value },
         alternatives: $('alternatives').checked,
+        selected_sensors: selectedSensors(),
+        planning_effort: ($('planning-effort') || {}).value || 'balanced',
       };
       if (groupIds && groupIds.length >= 1) {
         payload.drone_ids = groupIds;
+      } else if (mdAuto) {
+        payload.auto_drones = true;
+        payload.drones_vs_time_bias = (+$('md-bias').value) / 100.0;
       }
       const r = await fetch('/v1/missions:compile', {
         method: 'POST',
@@ -1420,11 +1700,27 @@ window.addEventListener('DOMContentLoaded', () => {
       REJECTED: { cls: 'rejected', icon: '✕', label: 'Rejected' },
       NEEDS_CLARIFICATION: { cls: 'clarification', icon: '?', label: 'Needs clarification' }
     };
-    const b = badgeMap[p.status] || { cls: 'error', icon: '⚠', label: p.status };
+    // For a multi-drone group the headline must reflect the WORST drone: the
+    // whole mission is only "ready" if EVERY drone is ready. A single rejected
+    // drone fails the mission (its plan is unsafe and must not be flown/approved).
+    const groupAll = body.group_plans || [];
+    let headlineStatus = p.status;
+    let rejectedCount = 0;
+    if (groupAll.length > 1) {
+      rejectedCount = groupAll.filter(g => g.status === 'REJECTED').length;
+      const clarifyCount = groupAll.filter(g => g.status === 'NEEDS_CLARIFICATION').length;
+      if (rejectedCount > 0) headlineStatus = 'REJECTED';
+      else if (clarifyCount > 0) headlineStatus = 'NEEDS_CLARIFICATION';
+      else headlineStatus = 'READY_FOR_APPROVAL';
+    }
+    const b = badgeMap[headlineStatus] || { cls: 'error', icon: '⚠', label: headlineStatus };
+    const headlineLabel = (groupAll.length > 1 && headlineStatus === 'REJECTED')
+      ? `Mission not ready — ${rejectedCount} of ${groupAll.length} drones rejected`
+      : b.label;
 
     let html = `
       <div class="status-bar">
-        <span class="badge ${b.cls}"><span class="badge-icon">${b.icon}</span>${b.label}</span>
+        <span class="badge ${b.cls}"><span class="badge-icon">${b.icon}</span>${headlineLabel}</span>
         <div class="status-meta">
           <span class="pill">${p.mission_id}</span>
           <span>${body.repair_loops} repair${body.repair_loops === 1 ? '' : 's'}</span>
@@ -1433,24 +1729,41 @@ window.addEventListener('DOMContentLoaded', () => {
 
     // Multi-drone group indicator (when present, see DESIGN_DECISIONS §9).
     const group = body.group_plans || [];
+    if (group.length >= 1 && body.auto_drones_reasoning) {
+      html += `<div class="section">
+        <div class="section-title">Auto fleet</div>
+        <div style="font-size: 12px; color: var(--fg-dim); line-height: 1.5;">
+          ${escapeHtml(body.auto_drones_reasoning)}
+        </div>
+      </div>`;
+    }
     if (group.length > 1) {
       html += `<div class="section">
-        <div class="section-title">Multi-drone group <span style="color: var(--muted);">(${group.length} drones)</span></div>
-        <div style="display: flex; flex-direction: column; gap: 6px;">
-          ${group.map((gp, i) => {
-            const hue = (i * 137) % 360;
-            const color = `hsl(${hue}, 70%, 60%)`;
-            const okBadge = gp.status === 'READY_FOR_APPROVAL' ? 'ready' : (gp.status === 'REJECTED' ? 'rejected' : 'clarification');
-            return `<div style="display: flex; align-items: center; gap: 8px; font-size: 12px;">
-              <div style="width: 12px; height: 12px; border-radius: 3px; background: ${color};"></div>
-              <span style="color: var(--fg-dim);">Drone ${i + 1}:</span>
+        <div class="section-title">Per drone <span style="color: var(--muted);">(${group.length} drones)</span></div>
+        ${group.map((gp, i) => {
+          const hue = (i * 137) % 360;
+          const color = `hsl(${hue}, 70%, 60%)`;
+          const okBadge = gp.status === 'READY_FOR_APPROVAL' ? 'ready' : (gp.status === 'REJECTED' ? 'rejected' : 'clarification');
+          const resv = gp.battery_reserve_pct;
+          const reasons = (gp.rejection_reasons || []).filter(Boolean);
+          const reasonHtml = (gp.status === 'REJECTED' && reasons.length)
+            ? `<div style="margin-top:7px; font-size:11px; color:var(--err); line-height:1.4;">⚠ ${escapeHtml(reasons.slice(0,2).join('; '))}</div>`
+            : '';
+          return `<div class="drone-card">
+            <div class="drone-card-head">
+              <span class="dot" style="background: ${color};"></span>
+              <span class="name">Drone ${i + 1}</span>
               <span class="mini-badge ${okBadge}">${gp.status.replace('_', ' ').toLowerCase()}</span>
-              <span style="color: var(--muted); font-family: 'JetBrains Mono', monospace; font-size: 11px;">
-                ${(gp.total_duration_s/60).toFixed(1)}m · ${gp.total_battery_pct.toFixed(0)}% bat · ${gp.legs.length} legs
-              </span>
-            </div>`;
-          }).join('')}
-        </div>
+            </div>
+            <div class="drone-stats">
+              <div class="drone-stat"><div class="lbl">Legs</div><div class="val">${gp.legs.length}</div></div>
+              <div class="drone-stat"><div class="lbl">Duration</div><div class="val">${(gp.total_duration_s/60).toFixed(1)}<span class="u">m</span></div></div>
+              <div class="drone-stat"><div class="lbl">Battery</div><div class="val">${gp.total_battery_pct.toFixed(0)}<span class="u">%</span></div></div>
+              <div class="drone-stat"><div class="lbl">Reserve</div><div class="val" style="color: ${resv >= 20 ? 'var(--ok)' : 'var(--err)'};">${resv.toFixed(0)}<span class="u">%</span></div></div>
+            </div>
+            ${reasonHtml}
+          </div>`;
+        }).join('')}
       </div>`;
     }
 
@@ -1471,7 +1784,20 @@ window.addEventListener('DOMContentLoaded', () => {
       </div>`;
     }
 
-    if (p.legs && p.legs.length) {
+    if (group.length > 1) {
+      // Compact fleet-average strip — the per-drone cards above are the headline;
+      // this is the mean across all drones, clearly labelled so it isn't mistaken
+      // for any single drone's numbers.
+      const mean = (f) => group.reduce((s, g) => s + f(g), 0) / group.length;
+      const avgResv = mean(g => g.battery_reserve_pct);
+      html += `<div class="fleet-avg">
+        <span class="fa-label">Fleet average · per drone</span>
+        <span class="fa-item"><b>${mean(g => g.legs.length).toFixed(1)}</b> legs</span>
+        <span class="fa-item"><b>${(mean(g => g.total_duration_s)/60).toFixed(1)}m</b> duration</span>
+        <span class="fa-item"><b>${mean(g => g.total_battery_pct).toFixed(0)}%</b> battery used</span>
+        <span class="fa-item">reserve <b style="color: ${avgResv >= 20 ? 'var(--ok)' : 'var(--err)'};">${avgResv.toFixed(0)}%</b></span>
+      </div>`;
+    } else if (p.legs && p.legs.length) {
       html += `<div class="stats">
         <div class="stat">
           <div class="lbl">Legs</div>
@@ -1495,23 +1821,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
     if (p.reasoning_trace) {
       html += `<div class="section">
-        <div class="section-title">Planner reasoning</div>
+        <div class="section-title">Plan summary</div>
         <div class="reasoning">${escapeHtml(p.reasoning_trace)}</div>
-      </div>`;
-    }
-
-    // LLM critique (advisory, see DESIGN_DECISIONS.md §6).
-    if (p.confidence_score !== null && p.confidence_score !== undefined) {
-      const s = p.confidence_score;
-      const cls = s >= 0.8 ? 'ok' : (s >= 0.5 ? 'warn' : 'err');
-      const colorVar = { ok: 'var(--ok)', warn: 'var(--warn)', err: 'var(--err)' }[cls];
-      const pct = Math.round(s * 100);
-      html += `<div class="section">
-        <div class="section-title">Tactical critique <span style="color:${colorVar}">${pct}%</span></div>
-        <div style="background: var(--hairline); height: 6px; border-radius: 3px; overflow: hidden; margin: 4px 0 8px;">
-          <div style="width: ${pct}%; height: 100%; background: ${colorVar};"></div>
-        </div>
-        <div class="reasoning" style="border-left-color: ${colorVar};">${escapeHtml(p.critique_notes || '(no notes)')}</div>
       </div>`;
     }
 
@@ -1522,14 +1833,14 @@ window.addEventListener('DOMContentLoaded', () => {
     if (p.advisory && (p.advisory.suggestions?.length || p.advisory.resource_constrained_fallback)) {
       const adv = p.advisory;
       html += `<div class="section">
-        <div class="section-title">Optimization advisor <span style="color:var(--muted); font-weight:400; text-transform:none; letter-spacing:0;">(${adv.suggestions?.length || 0} suggestion${(adv.suggestions?.length || 0) === 1 ? '' : 's'})</span></div>`;
+        <div class="section-title">Advisor <span style="color:var(--muted); font-weight:400; text-transform:none; letter-spacing:0;">(${adv.suggestions?.length || 0})</span></div>`;
       if (adv.summary) {
-        html += `<div class="reasoning" style="border-left-color: var(--accent); margin-bottom: 10px;">${escapeHtml(adv.summary)}</div>`;
+        html += `<div class="reasoning" style="border-left-color: var(--accent); margin-bottom: 8px;">${escapeHtml(adv.summary)}</div>`;
       }
       const order = { major: 0, moderate: 1, minor: 2 };
       const sorted = (adv.suggestions || []).slice().sort((a, b) =>
         (order[a.impact] ?? 3) - (order[b.impact] ?? 3));
-      html += sorted.map(s => `
+      html += sorted.map((s, i) => `
         <div class="advisor-card">
           <div class="advisor-card-head">
             <span class="impact-pill ${escapeHtml(s.impact || 'moderate')}">${escapeHtml(s.impact || 'moderate')}</span>
@@ -1537,6 +1848,7 @@ window.addEventListener('DOMContentLoaded', () => {
             <span class="category-chip">${escapeHtml(s.category || 'tactical')}</span>
           </div>
           <div class="advisor-card-rationale">${escapeHtml(s.rationale || '')}</div>
+          ${s.apply_command ? `<button class="btn btn-primary advisor-apply-btn" data-apply-cmd="${escapeHtml(s.apply_command)}" type="button" style="margin-top:8px;padding:6px 12px;font-size:12px;">Apply &amp; retry</button>` : ''}
         </div>`).join('');
       if (adv.resource_constrained_fallback) {
         html += `<div class="fallback-box">
@@ -1573,7 +1885,7 @@ window.addEventListener('DOMContentLoaded', () => {
     if (p.status === 'READY_FOR_APPROVAL') {
       html += `<div class="actions">
         <button class="btn btn-ok" id="approve">✓ Approve</button>
-        <button class="btn btn-ghost" id="verify">Verify (sim)</button>
+        <button class="btn btn-ghost" id="verify" title="Re-fly the plan tick-by-tick against the physics model to confirm it completes within endurance and stays in bounds.">Pre-flight check</button>
         <button class="btn btn-ghost" id="live-sim">▶ Live sim</button>
         <button class="btn btn-danger" id="reject">Reject</button>
       </div>`;
@@ -1623,8 +1935,21 @@ window.addEventListener('DOMContentLoaded', () => {
     $('approve')?.addEventListener('click', () => submitApproval(true));
     $('reject')?.addEventListener('click', () => submitApproval(false));
     $('verify')?.addEventListener('click', runVerify);
-    $('live-sim')?.addEventListener('click', startLiveSim);
+    $('live-sim')?.addEventListener('click', () => startLiveSim());
     wireMissionChat(p.mission_id);
+
+    // Advisor "Apply & retry": drop the suggestion's self-contained command
+    // into the box and recompile, reusing the operator's current area/drone/
+    // multi-drone/bias selections. No need to manually re-author the command.
+    document.querySelectorAll('.advisor-apply-btn').forEach(btn =>
+      btn.addEventListener('click', () => {
+        const cmd = btn.dataset.applyCmd;
+        if (!cmd) return;
+        $('command').value = cmd;
+        $('command').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        $('compile').click();
+      })
+    );
 
     document.querySelectorAll('.alt-chip').forEach(chip =>
       chip.addEventListener('click', () => {
@@ -1664,32 +1989,44 @@ window.addEventListener('DOMContentLoaded', () => {
   // ----- live simulation (websocket telemetry)
   let liveSim = null;
 
+  // Drone color palette. Mirror drawGroupOnMap's golden-angle HSL scheme so a
+  // drone's LIVE color matches its STATIC path color (same index → same hue).
+  function simDroneColor(di) {
+    const hue = (di * 137) % 360;
+    return `hsl(${hue}, 70%, 60%)`;
+  }
+
   function stopLiveSim(reason) {
     if (!liveSim) return;
-    try { liveSim.ws.close(); } catch (_) {}
-    if (liveSim.marker) map.removeLayer(liveSim.marker);
-    if (liveSim.trail) map.removeLayer(liveSim.trail);
+    for (const d of liveSim.drones || []) {
+      try { d.ws.close(); } catch (_) {}
+      if (d.marker) { try { map.removeLayer(d.marker); } catch (_) {} }
+      if (d.trail) { try { map.removeLayer(d.trail); } catch (_) {} }
+    }
     if (liveSim.panel) liveSim.panel.remove();
-    if (liveSim.supBanner) liveSim.supBanner.remove();
-    if (liveSim.injectMenu) liveSim.injectMenu.remove();
-    if (liveSim.replanLayer) map.removeLayer(liveSim.replanLayer);
+    if (liveSim.escHandler) document.removeEventListener('keydown', liveSim.escHandler);
+    if (liveSim.autoStopTimer) clearTimeout(liveSim.autoStopTimer);
     liveSim = null;
   }
 
-  function startLiveSim() {
+  function startLiveSim(speed) {
     if (!currentPlan || !currentPlan.legs?.length) return;
     if (liveSim) stopLiveSim();
 
-    // Session id ties the WS stream to its event-inject queue (DD-014).
-    const sessionId = (crypto.randomUUID ? crypto.randomUUID() : ('s-' + Date.now() + '-' + Math.random().toString(36).slice(2)));
-    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${wsProto}//${location.host}/ws/missions/${encodeURIComponent(currentPlan.mission_id)}/sim?speed=10&session_id=${encodeURIComponent(sessionId)}`;
-    const ws = new WebSocket(url);
-
-    const marker = L.circleMarker([0, 0], {
-      radius: 8, color: '#fff', fillColor: '#0a84ff', fillOpacity: 1, weight: 3,
-    });
-    const trail = L.polyline([], { color: '#0a84ff', weight: 4, opacity: 0.8 });
+    // The plans to fly: the whole group for a multi-drone mission, else just
+    // the primary plan. Only READY drones are flown — a REJECTED drone's plan
+    // is unsafe (e.g. busts endurance or clips an NFZ) and must never be
+    // animated as if it were a valid flight.
+    const source = (Array.isArray(currentGroup) && currentGroup.length > 1)
+      ? currentGroup
+      : [currentPlan];
+    const plans = source.filter(pl => pl && pl.status === 'READY_FOR_APPROVAL' && pl.legs?.length);
+    if (!plans.length) {
+      alert('No approved drone to simulate — all plans were rejected.');
+      return;
+    }
+    const isGroup = plans.length > 1;
+    if (speed == null) speed = 20; // default; changeable live via the selector
 
     // Floating telemetry panel anchored to the top of the viewport
     const panel = document.createElement('div');
@@ -1699,143 +2036,131 @@ window.addEventListener('DOMContentLoaded', () => {
       border: 1px solid var(--accent);
       padding: 12px 18px; z-index: 1300; min-width: 420px;
       font-size: 12px;
-      display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px;
+      display: grid; grid-template-columns: ${isGroup ? 'repeat(4, 1fr)' : 'repeat(5, 1fr)'} auto; gap: 16px; align-items: center;
     `;
-    panel.innerHTML = `
-      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Status</div><div id="sim-status" style="color:var(--accent); font-weight:600; margin-top:2px;">connecting…</div></div>
-      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Elapsed</div><div id="sim-t" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">0.0s</div></div>
-      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Altitude</div><div id="sim-alt" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">— m</div></div>
-      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Battery</div><div id="sim-bat" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">—%</div></div>
-      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Leg</div><div id="sim-leg" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">—</div></div>
-    `;
+    const speedSelect = `
+      <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Speed</div>
+        <select id="sim-speed" style="margin-top:2px; padding:2px 6px; font-size:12px;">
+          <option value="1">1×</option>
+          <option value="5">5×</option>
+          <option value="20" selected>20×</option>
+          <option value="50">50×</option>
+          <option value="100">100×</option>
+        </select>
+      </div>`;
+    if (isGroup) {
+      panel.innerHTML = `
+        <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Status</div><div id="sim-status" style="color:var(--accent); font-weight:600; margin-top:2px;">connecting…</div></div>
+        <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Elapsed</div><div id="sim-t" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">0.0s</div></div>
+        <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Min battery</div><div id="sim-bat" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">—%</div></div>
+        <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Drones</div><div id="sim-leg" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">—</div></div>
+        ${speedSelect}
+      `;
+    } else {
+      panel.innerHTML = `
+        <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Status</div><div id="sim-status" style="color:var(--accent); font-weight:600; margin-top:2px;">connecting…</div></div>
+        <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Elapsed</div><div id="sim-t" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">0.0s</div></div>
+        <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Altitude</div><div id="sim-alt" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">— m</div></div>
+        <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Battery</div><div id="sim-bat" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">—%</div></div>
+        <div><div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Leg</div><div id="sim-leg" style="font-family:'JetBrains Mono',monospace; margin-top:2px;">—</div></div>
+        ${speedSelect}
+      `;
+    }
     document.body.appendChild(panel);
 
-    // Supervisor banner — appears when a non-CONTINUE decision lands.
-    const supBanner = document.createElement('div');
-    supBanner.className = 'glass';
-    supBanner.style.cssText = `
-      position: fixed; top: 150px; left: 50%; transform: translateX(-50%);
-      border: 1px solid var(--warn); padding: 10px 16px; z-index: 1300;
-      min-width: 420px; font-size: 12px; display: none;
-    `;
-    document.body.appendChild(supBanner);
+    const statusEl = panel.querySelector('#sim-status');
+    const tEl = panel.querySelector('#sim-t');
+    const altEl = panel.querySelector('#sim-alt');
+    const batEl = panel.querySelector('#sim-bat');
+    const legEl = panel.querySelector('#sim-leg');
 
-    // Event-inject menu — a small floating control with one button per type.
-    const injectMenu = document.createElement('div');
-    injectMenu.className = 'glass';
-    injectMenu.style.cssText = `
-      position: fixed; bottom: 24px; right: 24px; z-index: 1300;
-      padding: 10px 12px; font-size: 11px; display: grid; gap: 6px;
-      grid-template-columns: 1fr; min-width: 200px;
-    `;
-    const injectMissionId = currentPlan.mission_id;
-    const injectButtons = [
-      { type: 'WIND_SPIKE',    label: 'Wind spike 15 m/s',   payload: { wind_mps: 15 } },
-      { type: 'NFZ_POPUP',     label: 'Pop-up NFZ ahead',    payload: { polygon: null /* filled below */ } },
-      { type: 'BATTERY_FAULT', label: 'Battery fault +0.1%/s', payload: { extra_drain_pct_s: 0.1 } },
-      { type: 'SENSOR_FAULT',  label: 'EO sensor offline',   payload: { mode: 'EO' } },
-      { type: 'GPS_DROPOUT',   label: 'GPS dropout',         payload: {} },
-      { type: 'MANUAL_RTB',    label: 'Manual RTB',          payload: {} },
-      { type: 'MANUAL_LAND',   label: 'Emergency land',      payload: {} },
-    ];
-    injectMenu.innerHTML = `<div style="color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:2px;">Inject event</div>`;
-    injectButtons.forEach((cfg) => {
-      const b = document.createElement('button');
-      b.className = 'btn';
-      b.style.cssText = 'font-size:11px; padding:6px 10px; text-align:left;';
-      b.textContent = cfg.label;
-      b.onclick = async () => {
-        let payload = { ...cfg.payload };
-        if (cfg.type === 'NFZ_POPUP') {
-          // Drop a small square NFZ centered ~50m ahead of current drone position
-          // (or at map center as fallback).
-          const center = liveSim?.marker?.getLatLng?.() || map.getCenter();
-          const d = 0.0008; // ~80m
-          payload.polygon = {
-            type: 'Polygon',
-            coordinates: [[
-              [center.lng - d, center.lat - d],
-              [center.lng + d, center.lat - d],
-              [center.lng + d, center.lat + d],
-              [center.lng - d, center.lat + d],
-              [center.lng - d, center.lat - d],
-            ]],
-          };
+    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const drones = [];
+
+    function refreshPanel() {
+      // Aggregate (group) or single-drone view, driven by latest frames.
+      const frames = drones.map(d => d.lastFrame).filter(Boolean);
+      if (isGroup) {
+        const flying = drones.filter(d => !d.done).length;
+        const done = drones.length - flying;
+        const maxT = frames.reduce((m, f) => Math.max(m, f.t), 0);
+        const minBat = frames.length ? frames.reduce((m, f) => Math.min(m, f.battery_pct), Infinity) : null;
+        tEl.textContent = `${maxT.toFixed(1)}s`;
+        batEl.textContent = minBat == null ? '—%' : `${minBat.toFixed(1)}%`;
+        batEl.style.color = (minBat != null && minBat < 20) ? 'var(--err)' : ((minBat != null && minBat < 35) ? 'var(--warn)' : 'var(--fg)');
+        legEl.textContent = `${flying} flying / ${done} done (${drones.length})`;
+      } else {
+        const f = frames[0];
+        if (!f) return;
+        tEl.textContent = `${f.t.toFixed(1)}s`;
+        altEl.textContent = `${f.alt_m.toFixed(0)} m`;
+        batEl.textContent = `${f.battery_pct.toFixed(1)}%`;
+        legEl.textContent = `${f.leg_idx + 1} (${f.leg_type})`;
+        batEl.style.color = f.battery_pct < 20 ? 'var(--err)' : (f.battery_pct < 35 ? 'var(--warn)' : 'var(--fg)');
+      }
+    }
+
+    function maybeFinish() {
+      if (!drones.every(d => d.done)) return;
+      const anyAborted = drones.some(d => d.lastFrame && d.lastFrame.status === 'aborted');
+      statusEl.textContent = anyAborted ? 'aborted' : 'done';
+      statusEl.style.color = anyAborted ? 'var(--err)' : 'var(--ok)';
+      liveSim.autoStopTimer = setTimeout(() => stopLiveSim('done'), 5000);
+    }
+
+    plans.forEach((plan, di) => {
+      // Color by ORIGINAL group index so a drone's live color matches its
+      // static path color even when rejected siblings are filtered out.
+      const gi = Array.isArray(currentGroup) ? currentGroup.indexOf(plan) : -1;
+      const color = simDroneColor(gi >= 0 ? gi : di);
+      const marker = L.circleMarker([0, 0], {
+        radius: 8, color: '#fff', fillColor: color, fillOpacity: 1, weight: 3,
+      });
+      const trail = L.polyline([], { color, weight: 4, opacity: 0.8 });
+      const url = `${wsProto}//${location.host}/ws/missions/${encodeURIComponent(plan.mission_id)}/sim?speed=${speed}`;
+      const ws = new WebSocket(url);
+      const drone = { ws, marker, trail, done: false, lastFrame: null };
+      drones.push(drone);
+
+      ws.onopen = () => { if (statusEl.textContent === 'connecting…') statusEl.textContent = 'flying'; };
+      ws.onerror = () => { statusEl.textContent = 'ws error'; statusEl.style.color = 'var(--err)'; };
+      ws.onclose = () => {};
+
+      ws.onmessage = (evt) => {
+        const f = JSON.parse(evt.data);
+        if (f.error) { statusEl.textContent = f.error; return; }
+
+        const ll = [f.lat, f.lon];
+        if (!marker._added) { marker.addTo(map); trail.addTo(map); marker._added = true; }
+        marker.setLatLng(ll);
+        trail.addLatLng(ll);
+
+        drone.lastFrame = f;
+        refreshPanel();
+
+        if (f.status !== 'flying') {
+          drone.done = true;
+          if (f.detail) statusEl.title = f.detail;
+          maybeFinish();
         }
-        try {
-          const r = await fetch(`/v1/missions/${encodeURIComponent(injectMissionId)}/sim:inject`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ session_id: sessionId, type: cfg.type, payload, note: '' }),
-          });
-          if (!r.ok) { const t = await r.text(); console.warn('inject failed', r.status, t); }
-        } catch (e) { console.warn('inject error', e); }
       };
-      injectMenu.appendChild(b);
     });
-    document.body.appendChild(injectMenu);
 
-    liveSim = { ws, marker, trail, panel, supBanner, injectMenu, replanLayer: null };
-
-    function showSupervisorBanner(msg) {
-      supBanner.style.display = 'block';
-      supBanner.innerHTML = msg;
+    function changeSpeed() {
+      // Restart cleanly at the new speed from t=0. stopLiveSim (called inside
+      // startLiveSim) closes all sockets, removes markers/trails, and detaches
+      // the Escape handler — so we never leak sockets or stack handlers.
+      const sel = panel.querySelector('#sim-speed');
+      const next = sel ? +sel.value : speed;
+      startLiveSim(next);
     }
-    function drawReplanPlan(plan) {
-      // Grey out the original plan and overlay the new one in cyan.
-      if (liveSim.replanLayer) { try { map.removeLayer(liveSim.replanLayer); } catch (_) {} }
-      const coords = [];
-      for (const leg of plan.legs || []) {
-        for (const wp of leg.geometry || []) coords.push([wp.lat, wp.lon]);
-      }
-      if (!coords.length) return;
-      liveSim.replanLayer = L.polyline(coords, { color: '#00e1ff', weight: 4, opacity: 0.95, dashArray: '8 4' }).addTo(map);
-    }
+    const speedSel = panel.querySelector('#sim-speed');
+    if (speedSel) { speedSel.value = String(speed); speedSel.addEventListener('change', changeSpeed); }
 
-    ws.onopen = () => { panel.querySelector('#sim-status').textContent = 'flying'; };
-    ws.onerror = () => { panel.querySelector('#sim-status').textContent = 'ws error'; panel.querySelector('#sim-status').style.color = 'var(--err)'; };
-    ws.onclose = () => {};
-
-    ws.onmessage = (evt) => {
-      const f = JSON.parse(evt.data);
-      if (f.error) { panel.querySelector('#sim-status').textContent = f.error; return; }
-
-      // Supervisor decision frame (DD-014).
-      if (f.kind === 'supervisor') {
-        const tag = f.decision === 'CONTINUE'
-          ? `<span style="color:var(--muted);">CONTINUE</span>`
-          : `<strong style="color:var(--warn);">${f.decision}</strong>`;
-        const eventList = (f.events || []).map(e => e.type).join(', ') || '—';
-        showSupervisorBanner(`${tag} · ${f.reason} <br><small style="opacity:0.75;">events: ${eventList}${f.plan_swapped ? ' · plan swapped' : ''}</small>`);
-        if (f.plan_swapped && f.new_plan) drawReplanPlan(f.new_plan);
-        return;
-      }
-
-      // Telemetry frame (default; legacy frames without `kind` also fall here).
-      const ll = [f.lat, f.lon];
-      if (!marker._added) { marker.addTo(map); trail.addTo(map); marker._added = true; }
-      marker.setLatLng(ll);
-      trail.addLatLng(ll);
-
-      panel.querySelector('#sim-t').textContent   = `${f.t.toFixed(1)}s`;
-      panel.querySelector('#sim-alt').textContent = `${f.alt_m.toFixed(0)} m`;
-      panel.querySelector('#sim-bat').textContent = `${f.battery_pct.toFixed(1)}%`;
-      panel.querySelector('#sim-leg').textContent = `${f.leg_idx + 1} (${f.leg_type})`;
-
-      const sBat = panel.querySelector('#sim-bat');
-      sBat.style.color = f.battery_pct < 20 ? 'var(--err)' : (f.battery_pct < 35 ? 'var(--warn)' : 'var(--fg)');
-
-      if (f.status !== 'flying') {
-        const statusEl = panel.querySelector('#sim-status');
-        statusEl.textContent = f.status;
-        statusEl.style.color = f.status === 'done' ? 'var(--ok)' : 'var(--err)';
-        if (f.detail) statusEl.title = f.detail;
-        setTimeout(() => stopLiveSim('done'), 5000);
-      }
-    };
-
-    const escHandler = (e) => { if (e.key === 'Escape') { stopLiveSim('esc'); document.removeEventListener('keydown', escHandler); } };
+    const escHandler = (e) => { if (e.key === 'Escape') { stopLiveSim('esc'); } };
     document.addEventListener('keydown', escHandler);
+
+    liveSim = { drones, panel, escHandler, autoStopTimer: null };
   }
 
   async function runVerify() {
@@ -1848,8 +2173,10 @@ window.addEventListener('DOMContentLoaded', () => {
       if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
       const note = document.createElement('div');
       note.className = 'toast ' + (body.flown_ok ? 'ok' : 'err');
-      note.innerHTML = `<strong>${body.flown_ok ? '✓ Verifier passed' : '✗ Verifier flagged deviations'}</strong> · actual ${body.actual_duration_s.toFixed(0)}s · ${body.actual_battery_pct.toFixed(1)}% battery` +
-        (body.deviations.length ? `<br><small style="opacity:0.85;">${body.deviations.join('<br>')}</small>` : '');
+      const mins = (body.actual_duration_s / 60).toFixed(1);
+      note.innerHTML = body.flown_ok
+        ? `<strong>✓ Pre-flight check passed</strong><br><small style="opacity:0.85;">Re-flew the plan tick-by-tick: completes in ${mins} min using ${body.actual_battery_pct.toFixed(0)}% battery, stays in bounds and within endurance.</small>`
+        : `<strong>✗ Pre-flight check found issues</strong><br><small style="opacity:0.85;">${body.deviations.join('<br>')}</small>`;
       resultEl.appendChild(note);
     } catch (e) {
       const note = document.createElement('div');
@@ -1857,7 +2184,7 @@ window.addEventListener('DOMContentLoaded', () => {
       note.textContent = 'Verify failed: ' + e.message;
       resultEl.appendChild(note);
     } finally {
-      if (oldBtn) { oldBtn.disabled = false; oldBtn.textContent = 'Verify (sim)'; }
+      if (oldBtn) { oldBtn.disabled = false; oldBtn.textContent = 'Pre-flight check'; }
     }
   }
 
@@ -1866,13 +2193,184 @@ window.addEventListener('DOMContentLoaded', () => {
       ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   }
 
-  // ----- area editor (Leaflet.draw)
+  // ----- area editor (Leaflet.draw, driven by explicit buttons)
+  //
+  // We deliberately do NOT use L.Control.Draw's tiny toolbar — its icons are
+  // hard to see on the dark basemap. Instead we instantiate the underlying
+  // L.Draw.Polygon / L.Draw.Marker handlers ourselves and bind them to the
+  // three labeled "Draw boundary / Add no-fly zone / Add home base" buttons.
+  // Mode is tracked explicitly so onShapeCreated knows what the user intended.
   let editorState = null;
   $('edit-area-btn').addEventListener('click', startEditor);
   $('cancel-area-btn').addEventListener('click', endEditor);
   $('save-area-btn').addEventListener('click', saveArea);
+  $('draw-boundary-btn').addEventListener('click', () => enableDraw('boundary'));
+  $('draw-nfz-btn').addEventListener('click', () => enableDraw('nfz'));
+  $('draw-home-btn').addEventListener('click', () => enableDraw('home'));
+  $('clear-area-btn').addEventListener('click', clearDrafts);
+  $('apply-coords-btn').addEventListener('click', applyCoords);
 
   function setEditorStatus(text) { $('editor-status').textContent = text; }
+
+  // Parse a block of "lon, lat" (or "lon lat") lines into [[lon, lat], ...].
+  // Returns { points, error }. Coordinates are GeoJSON order on input.
+  function parseLonLatBlock(text, label) {
+    const pts = [];
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    for (const line of lines) {
+      const parts = line.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+      if (parts.length !== 2) {
+        return { error: `${label}: bad line "${line}" — expected "lon, lat"` };
+      }
+      const lon = Number(parts[0]);
+      const lat = Number(parts[1]);
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+        return { error: `${label}: non-numeric value in "${line}"` };
+      }
+      if (lon < -180 || lon > 180) {
+        return { error: `${label}: lon ${lon} out of range [-180,180]` };
+      }
+      if (lat < -90 || lat > 90) {
+        return { error: `${label}: lat ${lat} out of range [-90,90]` };
+      }
+      pts.push([lon, lat]);
+    }
+    return { points: pts };
+  }
+
+  // Build Leaflet layers from the coordinate textareas and populate
+  // editorState exactly as the click-to-draw path does, so saveArea() works
+  // unchanged. Coordinates are entered lon,lat (GeoJSON) and swapped to
+  // [lat, lng] for Leaflet constructors.
+  function applyCoords() {
+    if (!editorState) return;
+
+    // --- boundary (required, >=3 vertices) ---
+    const bRes = parseLonLatBlock($('coords-boundary').value, 'boundary');
+    if (bRes.error) { setEditorStatus(bRes.error); return; }
+    if (bRes.points.length < 3) {
+      setEditorStatus('boundary: need at least 3 vertices'); return;
+    }
+
+    // --- NFZs (optional; blank-line-separated blocks, each >=3 vertices) ---
+    const nfzText = $('coords-nfz').value.trim();
+    const nfzPolys = [];
+    if (nfzText) {
+      const blocks = nfzText.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+      for (let i = 0; i < blocks.length; i++) {
+        const res = parseLonLatBlock(blocks[i], `NFZ #${i + 1}`);
+        if (res.error) { setEditorStatus(res.error); return; }
+        if (res.points.length < 3) {
+          setEditorStatus(`NFZ #${i + 1}: need at least 3 vertices`); return;
+        }
+        nfzPolys.push(res.points);
+      }
+    }
+
+    // --- home bases (required, >=1) ---
+    const hRes = parseLonLatBlock($('coords-home').value, 'home base');
+    if (hRes.error) { setEditorStatus(hRes.error); return; }
+    if (hRes.points.length < 1) {
+      setEditorStatus('home base: need at least 1 point'); return;
+    }
+
+    // All parsed OK — clear any existing drafts, then build layers. Swap each
+    // [lon, lat] to Leaflet's [lat, lng].
+    clearDrafts();
+
+    const boundaryLatLngs = bRes.points.map(([lon, lat]) => [lat, lon]);
+    const boundaryLayer = L.polygon(boundaryLatLngs, {
+      color: '#0a84ff', weight: 2.5, fillOpacity: 0.04,
+    });
+    editorState.draftBoundary = boundaryLayer;
+    editorState.drawnItems.addLayer(boundaryLayer);
+
+    for (const poly of nfzPolys) {
+      const latlngs = poly.map(([lon, lat]) => [lat, lon]);
+      const nfzLayer = L.polygon(latlngs, {
+        color: '#ef6764', weight: 2, fillOpacity: 0.18,
+      });
+      editorState.drawnItems.addLayer(nfzLayer);
+      editorState.draftNfzs.push(nfzLayer);
+    }
+
+    for (const [lon, lat] of hRes.points) {
+      const marker = L.marker([lat, lon]);
+      editorState.draftHomes.push(marker);
+      editorState.drawnItems.addLayer(marker);
+    }
+
+    map.fitBounds(boundaryLayer.getBounds(), { padding: [80, 420] });
+    refreshDrawButtons();
+    setEditorStatus(`coordinates applied · boundary + ${nfzPolys.length} NFZ${nfzPolys.length === 1 ? '' : 's'} + ${hRes.points.length} home base${hRes.points.length === 1 ? '' : 's'}`);
+  }
+
+  function clearCoordInputs() {
+    const b = $('coords-boundary'); if (b) b.value = '';
+    const n = $('coords-nfz'); if (n) n.value = '';
+    const h = $('coords-home'); if (h) h.value = '';
+  }
+
+  function refreshDrawButtons() {
+    if (!editorState) return;
+    const hasBoundary = !!editorState.draftBoundary;
+    const bBtn = $('draw-boundary-btn');
+    const nBtn = $('draw-nfz-btn');
+    const hBtn = $('draw-home-btn');
+    const cBtn = $('clear-area-btn');
+    bBtn.classList.toggle('done', hasBoundary);
+    hBtn.classList.toggle('done', editorState.draftHomes.length > 0);
+    nBtn.classList.toggle('done', editorState.draftNfzs.length > 0);
+    nBtn.disabled = !hasBoundary;
+    hBtn.disabled = !hasBoundary;
+    cBtn.disabled = !(hasBoundary || editorState.draftNfzs.length || editorState.draftHomes.length);
+    // Show the active mode.
+    for (const id of ['draw-boundary-btn', 'draw-nfz-btn', 'draw-home-btn']) {
+      $(id).classList.toggle('active', editorState.activeMode === id.replace('draw-', '').replace('-btn', ''));
+    }
+  }
+
+  function disableActiveHandler() {
+    if (!editorState) return;
+    for (const h of [editorState.boundaryHandler, editorState.nfzHandler, editorState.homeHandler]) {
+      if (h && h.enabled && h.enabled()) h.disable();
+    }
+    editorState.activeMode = null;
+  }
+
+  function enableDraw(mode) {
+    if (!editorState) return;
+    disableActiveHandler();
+    if (mode === 'boundary') {
+      // Replacing an existing boundary also clears NFZs/home, since their
+      // validity is anchored to the boundary they were drawn against.
+      if (editorState.draftBoundary) clearDrafts();
+      editorState.boundaryHandler.enable();
+      setEditorStatus('click on the map to place boundary vertices · double-click to finish');
+    } else if (mode === 'nfz') {
+      if (!editorState.draftBoundary) { setEditorStatus('draw the boundary first'); return; }
+      editorState.nfzHandler.enable();
+      setEditorStatus('click on the map to place NFZ vertices · double-click to finish');
+    } else if (mode === 'home') {
+      if (!editorState.draftBoundary) { setEditorStatus('draw the boundary first'); return; }
+      editorState.homeHandler.enable();
+      setEditorStatus('click on the map to add a home marker');
+    }
+    editorState.activeMode = mode;
+    refreshDrawButtons();
+  }
+
+  function clearDrafts() {
+    if (!editorState) return;
+    disableActiveHandler();
+    editorState.drawnItems.clearLayers();
+    editorState.draftBoundary = null;
+    editorState.draftNfzs = [];
+    editorState.draftHomes = [];
+    clearCoordInputs();
+    setEditorStatus('cleared · draw boundary first');
+    refreshDrawButtons();
+  }
 
   function startEditor() {
     if (editorState) return;
@@ -1880,21 +2378,35 @@ window.addEventListener('DOMContentLoaded', () => {
     if (planLayer) { map.removeLayer(planLayer); planLayer = null; }
 
     const drawnItems = new L.FeatureGroup().addTo(map);
-    const controls = new L.Control.Draw({
-      position: 'topleft',
-      edit: { featureGroup: drawnItems, remove: true },
-      draw: {
-        polygon: { shapeOptions: { color: '#0a84ff', weight: 2 } },
-        polyline: false, rectangle: false, circle: false, circlemarker: false,
-        marker: true,
-      },
-    });
-    map.addControl(controls);
 
-    editorState = { drawnItems, draftBoundary: null, draftNfzs: [], draftHome: null, controls };
+    // Separate handlers per intent so the in-progress preview color matches
+    // the final color of the shape being drawn (blue boundary, red NFZ).
+    const boundaryHandler = new L.Draw.Polygon(map, {
+      shapeOptions: { color: '#0a84ff', weight: 2.5, fillOpacity: 0.04 },
+      allowIntersection: false,
+    });
+    const nfzHandler = new L.Draw.Polygon(map, {
+      shapeOptions: { color: '#ef6764', weight: 2, fillOpacity: 0.18 },
+      allowIntersection: false,
+    });
+    const homeHandler = new L.Draw.Marker(map, {});
+
+    editorState = {
+      drawnItems,
+      draftBoundary: null,
+      draftNfzs: [],
+      draftHomes: [],
+      boundaryHandler,
+      nfzHandler,
+      homeHandler,
+      activeMode: null,
+    };
+    clearCoordInputs();
+    const cs = $('coords-section'); if (cs) cs.open = false;
     $('editor-panel').classList.add('open');
     $('edit-area-btn').parentElement.style.display = 'none';
-    setEditorStatus('draw boundary first');
+    setEditorStatus('click "Draw boundary" to begin');
+    refreshDrawButtons();
 
     map.on(L.Draw.Event.CREATED, onShapeCreated);
   }
@@ -1902,31 +2414,31 @@ window.addEventListener('DOMContentLoaded', () => {
   function onShapeCreated(e) {
     if (!editorState) return;
     const layer = e.layer;
-    if (e.layerType === 'polygon') {
-      if (!editorState.draftBoundary) {
-        editorState.draftBoundary = layer;
-        layer.setStyle({ color: '#0a84ff', weight: 2.5, fillOpacity: 0.04 });
-        editorState.drawnItems.addLayer(layer);
-        setEditorStatus('boundary set · add NFZs or click home marker');
-      } else {
-        layer.setStyle({ color: '#ef6764', weight: 2, fillOpacity: 0.18 });
-        editorState.drawnItems.addLayer(layer);
-        editorState.draftNfzs.push(layer);
-        setEditorStatus(`boundary + ${editorState.draftNfzs.length} NFZ${editorState.draftNfzs.length === 1 ? '' : 's'}`);
-      }
-    } else if (e.layerType === 'marker') {
-      if (editorState.draftHome) editorState.drawnItems.removeLayer(editorState.draftHome);
-      editorState.draftHome = layer;
+    const mode = editorState.activeMode;
+    if (e.layerType === 'polygon' && mode === 'boundary') {
+      editorState.draftBoundary = layer;
+      layer.setStyle({ color: '#0a84ff', weight: 2.5, fillOpacity: 0.04 });
+      editorState.drawnItems.addLayer(layer);
+      setEditorStatus('boundary set · add no-fly zones or add home bases');
+    } else if (e.layerType === 'polygon' && mode === 'nfz') {
+      layer.setStyle({ color: '#ef6764', weight: 2, fillOpacity: 0.18 });
+      editorState.drawnItems.addLayer(layer);
+      editorState.draftNfzs.push(layer);
+      setEditorStatus(`${editorState.draftNfzs.length} NFZ${editorState.draftNfzs.length === 1 ? '' : 's'} drawn · add another or add home bases`);
+    } else if (e.layerType === 'marker' && mode === 'home') {
+      editorState.draftHomes.push(layer);
       editorState.drawnItems.addLayer(layer);
       const ll = layer.getLatLng();
-      setEditorStatus(`home set: ${ll.lat.toFixed(5)},${ll.lng.toFixed(5)} (server will snap to boundary)`);
+      setEditorStatus(`${editorState.draftHomes.length} home base${editorState.draftHomes.length === 1 ? '' : 's'} set · last ${ll.lat.toFixed(5)},${ll.lng.toFixed(5)}`);
     }
+    editorState.activeMode = null;
+    refreshDrawButtons();
   }
 
   function endEditor() {
     if (!editorState) return;
+    disableActiveHandler();
     map.removeLayer(editorState.drawnItems);
-    map.removeControl(editorState.controls);
     map.off(L.Draw.Event.CREATED, onShapeCreated);
     editorState = null;
     $('editor-panel').classList.remove('open');
@@ -1941,15 +2453,20 @@ window.addEventListener('DOMContentLoaded', () => {
     const ceiling = parseFloat($('new-ceiling').value);
     if (!id) { setEditorStatus('area ID required'); return; }
     if (!editorState.draftBoundary) { setEditorStatus('draw a boundary first'); return; }
-    if (!editorState.draftHome) { setEditorStatus('drop a home marker'); return; }
+    if (!editorState.draftHomes.length) { setEditorStatus('drop at least one home marker'); return; }
+    const homeBases = editorState.draftHomes.map(l => {
+      const ll = l.getLatLng();
+      return [ll.lng, ll.lat];
+    });
 
     const body = {
       area_id: id,
       ceiling_m: ceiling || 120.0,
       boundary: editorState.draftBoundary.toGeoJSON().geometry,
       nfzs: editorState.draftNfzs.map(l => l.toGeoJSON().geometry),
-      home_lon: editorState.draftHome.getLatLng().lng,
-      home_lat: editorState.draftHome.getLatLng().lat,
+      home_lon: homeBases[0][0],
+      home_lat: homeBases[0][1],
+      home_bases: homeBases,
     };
     try {
       const r = await fetch('/v1/areas', {
@@ -1958,7 +2475,8 @@ window.addEventListener('DOMContentLoaded', () => {
       });
       const resp = await r.json();
       if (!r.ok) throw new Error(resp.detail || `HTTP ${r.status}`);
-      setEditorStatus(`saved · home snapped to ${resp.home_lat.toFixed(5)},${resp.home_lon.toFixed(5)}`);
+      const savedHomes = resp.home_bases?.length || 1;
+      setEditorStatus(`saved · ${savedHomes} home base${savedHomes === 1 ? '' : 's'} snapped to boundary`);
       await loadAreas();
       areaSel.value = id;
       const a = currentAreas.find(x => x.area_id === id);
@@ -2031,7 +2549,11 @@ window.addEventListener('DOMContentLoaded', () => {
     try {
       const r = await fetch('/v1/missions/' + encodeURIComponent(mid));
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const plan = await r.json();
+      // The detail endpoint returns a stored-mission wrapper
+      // ({ plan, status, command, repair_drafts, ... }); the renderer and map
+      // drawer expect the inner MissionPlan (mission_id, legs, durations…).
+      const detail = await r.json();
+      const plan = detail.plan || detail;
       if (areaId && areaSel.value !== areaId) {
         areaSel.value = areaId;
         const a = currentAreas.find(x => x.area_id === areaId);
@@ -2039,7 +2561,7 @@ window.addEventListener('DOMContentLoaded', () => {
       }
       currentPlan = plan;
       showResult();
-      renderResult({ plan, repair_loops: 0 });
+      renderResult({ plan, repair_loops: (detail.repair_drafts || []).length });
       drawPlanOnMap(plan, plan.rejection_reasons || []);
       drawer.classList.remove('open');
       drawer.setAttribute('aria-hidden', 'true');
@@ -2136,6 +2658,8 @@ window.addEventListener('DOMContentLoaded', () => {
       operator_clearance: 'STANDARD',
       drone_state: { drone_profile_id: droneSel.value, battery_pct: +battery.value },
       alternatives: false,
+      selected_sensors: selectedSensors(),
+      planning_effort: ($('planning-effort') || {}).value || 'balanced',
       conversation_history: conversationHistory.slice(0, -1),  // exclude the just-pushed user turn (sent as `command`)
     };
     try {
@@ -2223,8 +2747,8 @@ window.addEventListener('DOMContentLoaded', () => {
     rDiv.style.display = 'block';
     rDiv.innerHTML = 'Asking the LLM about this area…';
     try {
-      const home = editorState.draftHome
-        ? editorState.draftHome.getLatLng()
+      const home = editorState.draftHomes.length
+        ? editorState.draftHomes[0].getLatLng()
         : editorState.draftBoundary.getBounds().getCenter();
       const payload = {
         boundary: editorState.draftBoundary.toGeoJSON().geometry,
@@ -2322,6 +2846,29 @@ window.addEventListener('DOMContentLoaded', () => {
         const reply = body.reply || '(no response)';
         history.push({ role: 'assistant', content: reply });
         appendBubble('assistant', reply);
+
+        // Chat-driven retry: when the chat LLM detects "redo / retry / try
+        // again" intent it returns action="retry" with a refined command. We
+        // render a one-click button that drops it into the textarea and fires
+        // the existing Compile flow (which reuses the operator's current
+        // area/drone/multi-drone/bias selections).
+        if (body.action === 'retry' && body.refined_command) {
+          const wrap = document.createElement('div');
+          wrap.className = 'mc-bubble assistant';
+          wrap.style.background = 'transparent';
+          wrap.style.border = '1px dashed var(--accent)';
+          wrap.innerHTML = `
+            <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">Suggested retry:</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--fg);margin-bottom:8px;">${escapeHtml(body.refined_command)}</div>
+            <button class="btn btn-primary" style="padding:6px 12px;font-size:12px;" type="button">Retry with this command</button>
+          `;
+          wrap.querySelector('button').addEventListener('click', () => {
+            $('command').value = body.refined_command;
+            $('compile').click();
+          });
+          thread.appendChild(wrap);
+          thread.scrollTop = thread.scrollHeight;
+        }
       } catch (e) {
         typing.remove();
         appendBubble('assistant', '⚠ Chat failed: ' + e.message);

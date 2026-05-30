@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -15,7 +16,10 @@ def _make_client():
 
 
 def test_healthz():
-    with patch("app.observability.tracing.configure_tracing", lambda *_: None):
+    with (
+        patch.dict(os.environ, {"MTS_SKIP_GRAPH_STARTUP": "1"}),
+        patch("app.observability.tracing.configure_tracing", lambda *_: None),
+    ):
         client = _make_client()
         r = client.get("/healthz")
     assert r.status_code == 200
@@ -23,7 +27,10 @@ def test_healthz():
 
 
 def test_metrics_endpoint_returns_prometheus():
-    with patch("app.observability.tracing.configure_tracing", lambda *_: None):
+    with (
+        patch.dict(os.environ, {"MTS_SKIP_GRAPH_STARTUP": "1"}),
+        patch("app.observability.tracing.configure_tracing", lambda *_: None),
+    ):
         client = _make_client()
         r = client.get("/metrics")
     assert r.status_code == 200

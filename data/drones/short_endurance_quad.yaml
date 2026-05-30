@@ -8,6 +8,9 @@ climb_rate_mps: 3.0
 battery_wh: 180.0
 cruise_power_w: 350.0
 hover_power_w: 450.0
+# Peak linear acceleration for the kinematic trajectory model (DD-015). Smaller,
+# punchier airframe so it reaches cruise a touch faster than the big quad.
+max_accel_mps2: 3.5
 sensors:
   - name: nadir_eo
     mode: EO

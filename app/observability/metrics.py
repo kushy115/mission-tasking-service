@@ -1,7 +1,7 @@
 """Prometheus metrics. Mounted at /metrics by app.main.create_app.
 
-See `docs/observability.md` for the interpretation guide — what each metric
-means, healthy ranges, and what to investigate when one moves.
+See `docs/GUIDE.md` (Observability section) for the interpretation guide — what
+each metric means, healthy ranges, and what to investigate when one moves.
 """
 
 from __future__ import annotations

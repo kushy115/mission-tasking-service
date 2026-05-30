@@ -90,6 +90,68 @@ def _build_rtb_plan(
     )
 
 
+def _build_loiter_rtb_plan(
+    *,
+    current_lat: float,
+    current_lon: float,
+    current_alt: float,
+    home_lon: float,
+    home_lat: float,
+    ceiling_m: float,
+    area_id: str,
+    profile: DroneProfile,
+    hold_s: float = 20.0,
+) -> MissionPlan:
+    """Lost-link contingency: hold position (loiter) for `hold_s`, then fly home.
+
+    Models the standard lost-C2/GPS procedure — the aircraft holds where it is
+    long enough to re-acquire link, then returns to base automatically.
+    """
+    cruise_alt = min(max(current_alt, 40.0), max(20.0, ceiling_m - 5.0))
+    hold_wp = Waypoint(lat=current_lat, lon=current_lon, alt_m=cruise_alt)
+    home_wp = Waypoint(lat=home_lat, lon=home_lon, alt_m=cruise_alt)
+    landing_wp = Waypoint(lat=home_lat, lon=home_lon, alt_m=0.0)
+
+    loiter = MissionLeg(
+        leg_type=LegType.LOITER,
+        geometry=[hold_wp],
+        sensor_mode=None,
+        est_duration_s=hold_s,
+        est_battery_pct=0.0,
+    )
+    transit = MissionLeg(
+        leg_type=LegType.TRANSIT,
+        geometry=[hold_wp, home_wp],
+        sensor_mode=None,
+        est_duration_s=0.0,
+        est_battery_pct=0.0,
+    )
+    rtb = MissionLeg(
+        leg_type=LegType.RETURN_TO_BASE,
+        geometry=[home_wp, landing_wp],
+        sensor_mode=None,
+        est_duration_s=0.0,
+        est_battery_pct=0.0,
+    )
+    for leg in (loiter, transit, rtb):
+        energy = estimate_leg(leg, profile)
+        # Keep the explicit hold duration for the loiter; physics drives the rest.
+        if leg is not loiter:
+            leg.est_duration_s = energy.duration_s
+        leg.est_battery_pct = energy.battery_pct
+
+    return MissionPlan(
+        mission_id=f"lostlink-{uuid.uuid4().hex[:8]}",
+        area_id=area_id,
+        status="READY_FOR_APPROVAL",
+        legs=[loiter, transit, rtb],
+        total_duration_s=loiter.est_duration_s + transit.est_duration_s + rtb.est_duration_s,
+        total_battery_pct=loiter.est_battery_pct + transit.est_battery_pct + rtb.est_battery_pct,
+        battery_reserve_pct=0.0,
+        reasoning_trace="Supervisor LOST_LINK: hold position, then return to base.",
+    )
+
+
 def _build_emergency_land_plan(
     *,
     current_lat: float,
@@ -301,6 +363,17 @@ async def live_mission_session(
                     SupervisorDecision.DIVERT_TO_SAFE_POINT.value,
                 ):
                     new_plan = _build_rtb_plan(
+                        current_lat=f_dict["lat"],
+                        current_lon=f_dict["lon"],
+                        current_alt=f_dict["alt_m"],
+                        home_lon=home_lon,
+                        home_lat=home_lat,
+                        ceiling_m=ceiling_m,
+                        area_id=area_id,
+                        profile=profile,
+                    )
+                elif decision == SupervisorDecision.LOITER_RTB.value:
+                    new_plan = _build_loiter_rtb_plan(
                         current_lat=f_dict["lat"],
                         current_lon=f_dict["lon"],
                         current_alt=f_dict["alt_m"],

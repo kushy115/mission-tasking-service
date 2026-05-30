@@ -28,9 +28,42 @@ class CompileRequest(BaseModel):
         False,
         description="If true, the planner emits 2–3 alternative plans (see DESIGN_DECISIONS §7).",
     )
+    planning_effort: str = Field(
+        "",
+        description=(
+            "Planner effort tier: 'fast' (one direct LLM call — rate-limit "
+            "friendly), 'balanced' (tool-calling agent), or 'thorough' (agent on "
+            "the strongest model). Empty = server default."
+        ),
+    )
+    selected_sensors: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Sensors the operator explicitly enabled (subset of {EO, IR}). The "
+            "planner constrains every leg's sensor_mode to this set. Empty = "
+            "planner default (EO / visual)."
+        ),
+    )
     drone_ids: list[str] | None = Field(
         None,
         description="If set, compile a multi-drone group plan, one per id (see DESIGN_DECISIONS §9).",
+    )
+    auto_drones: bool = Field(
+        False,
+        description=(
+            "If true, the LLM picks how many drones and which profiles to use "
+            "from the available fleet (see app/graph/auto_drones.py). Ignored "
+            "when `drone_ids` is also set — explicit IDs win."
+        ),
+    )
+    drones_vs_time_bias: float = Field(
+        0.5,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Bias for auto_drones. 0.0 = minimize drone count, 1.0 = minimize "
+            "mission wall-clock time. 0.5 is balanced."
+        ),
     )
     # Chat-style clarification thread (DD-005). When the prior compile returned
     # NEEDS_CLARIFICATION, the UI sends the prior turns so the planner sees the
@@ -91,6 +124,10 @@ class CompileResponse(BaseModel):
     alternatives: list[MissionPlan] = Field(default_factory=list)
     # Multi-drone group response (one entry per drone_id; otherwise empty).
     group_plans: list[MissionPlan] = Field(default_factory=list)
+    # When auto_drones was used, this is the LLM's fleet-pick justification
+    # ("3 drones because the area is ~1.2 km² and bias favored speed"). Empty
+    # for manually-specified or single-drone missions.
+    auto_drones_reasoning: str = ""
 
 
 class ApprovalRequest(BaseModel):
@@ -135,6 +172,12 @@ class MissionChatRequest(BaseModel):
 class MissionChatResponse(BaseModel):
     reply: str
     mission_id: str
+    # When the operator asks the chat to redo/retry the mission, the LLM emits a
+    # sentinel and we surface a structured signal so the UI can offer a one-
+    # click recompile (reusing the current area + drone selection). Empty when
+    # the chat is just a Q&A turn.
+    action: str = ""  # one of: "", "retry"
+    refined_command: str = ""
 
 
 class AreaUpsertRequest(BaseModel):
@@ -146,32 +189,18 @@ class AreaUpsertRequest(BaseModel):
     ceiling_m: float = Field(120.0, gt=0.0, le=500.0)
     home_lon: float = Field(..., ge=-180.0, le=180.0)
     home_lat: float = Field(..., ge=-90.0, le=90.0)
+    home_bases: list[tuple[float, float]] = Field(
+        default_factory=list,
+        description="Optional list of [lon, lat] home/base points. Falls back to home_lon/home_lat.",
+    )
 
 
 class AreaUpsertResponse(BaseModel):
     area_id: str
     home_lon: float
     home_lat: float
+    home_bases: list[tuple[float, float]] = Field(default_factory=list)
     nfz_count: int
     home_was_snapped: bool
 
 
-class SupervisorInjectRequest(BaseModel):
-    """Inject an in-flight event into a live mission session.
-
-    `session_id` is the per-WS client identifier (UUID-ish; UI generates it
-    before opening the WebSocket and passes it both in the WS query string
-    and on this POST). The supervisor's policy reads the event off the queue
-    on its next tick. See DESIGN_DECISIONS DD-014.
-    """
-
-    session_id: str = Field(..., min_length=1, max_length=64)
-    type: str = Field(..., description="EventType value (e.g. WIND_SPIKE)")
-    payload: dict[str, Any] = Field(default_factory=dict)
-    note: str = Field("", max_length=256)
-
-
-class SupervisorInjectResponse(BaseModel):
-    accepted: bool
-    queue_size: int
-    detail: str = ""

@@ -54,6 +54,11 @@ class DroneProfile:
     cruise_power_w: float
     hover_power_w: float
     sensors: tuple[SensorSpec, ...]
+    # Peak linear acceleration used by the kinematic trajectory model (DD-015).
+    # Optional in the profile YAML/DB; a mid-size quad reaches cruise in a few
+    # seconds, so 2.5 m/s^2 is a sane default that leaves existing profiles
+    # unchanged. The coarse estimator in this module ignores it.
+    max_accel_mps2: float = 2.5
 
     def sensor(self, mode: SensorMode) -> SensorSpec | None:
         for s in self.sensors:

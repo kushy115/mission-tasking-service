@@ -71,73 +71,182 @@ def decide_node(state: SupervisorState) -> dict[str, Any]:
         }
 
 
+def _direct_home_plan(
+    cur: dict[str, Any],
+    home_lon: float,
+    home_lat: float,
+    ceiling: float,
+    area_id: str,
+    profile: Any,
+) -> MissionPlan:
+    """Fallback: a direct-to-home TRANSIT + landing plan."""
+    cruise_alt = min(max(float(cur.get("alt_m") or 60.0), 40.0), max(20.0, ceiling - 5.0))
+    cur_wp = Waypoint(lat=float(cur["lat"]), lon=float(cur["lon"]), alt_m=cruise_alt)
+    home_wp = Waypoint(lat=home_lat, lon=home_lon, alt_m=cruise_alt)
+    landing_wp = Waypoint(lat=home_lat, lon=home_lon, alt_m=0.0)
+    transit = MissionLeg(
+        leg_type=LegType.TRANSIT, geometry=[cur_wp, home_wp], sensor_mode=None,
+        est_duration_s=0.0, est_battery_pct=0.0,
+    )
+    rtb = MissionLeg(
+        leg_type=LegType.RETURN_TO_BASE, geometry=[home_wp, landing_wp], sensor_mode=None,
+        est_duration_s=0.0, est_battery_pct=0.0,
+    )
+    for leg in (transit, rtb):
+        e = estimate_leg(leg, profile)
+        leg.est_duration_s, leg.est_battery_pct = e.duration_s, e.battery_pct
+    starting = float(cur.get("battery_pct") or 100.0)
+    return MissionPlan(
+        mission_id=f"replan-{uuid.uuid4().hex[:8]}",
+        area_id=area_id,
+        status="READY_FOR_APPROVAL",
+        legs=[transit, rtb],
+        total_duration_s=transit.est_duration_s + rtb.est_duration_s,
+        total_battery_pct=transit.est_battery_pct + rtb.est_battery_pct,
+        battery_reserve_pct=max(0.0, starting - (transit.est_battery_pct + rtb.est_battery_pct)),
+        reasoning_trace="Supervisor replan: direct-to-home from current position.",
+    )
+
+
 def replan_node(state: SupervisorState) -> dict[str, Any]:
-    """Build a concrete replacement plan for REPLAN_FROM_HERE.
+    """Reroute the REMAINING mission around a pop-up NFZ so the mission continues.
 
-    Initial implementation: synthesize a direct-to-home plan (single TRANSIT
-    leg from current position to home, with the kernel re-validating). This
-    is the safe baseline — guaranteed to converge to a flyable plan as long
-    as the drone has the battery to make it home.
+    This is the real "replan around it" behavior: rather than abandoning the
+    mission and flying home, we keep every remaining leg (search pattern, etc.)
+    but bend its geometry around the new restricted-airspace polygon using the
+    same deterministic visibility-graph router the planner uses. The drone
+    visibly skirts the new zone and carries on.
 
-    A richer "preserve original objective" replan (invoke the compile graph
-    with a warm-start command) is a future extension; documented in
-    DD-014's trade-off section.
+    Falls back to a direct-to-home plan if there's no usable NFZ polygon in the
+    events, if rerouting fails, or if the remaining plan is empty.
     """
+    cur = state["current_telemetry"]
+    home_lon, home_lat = state["home"]
+    ceiling = float(state.get("altitude_ceiling_m") or 120.0)
     try:
-        cur = state["current_telemetry"]
-        home_lon, home_lat = state["home"]
-        ceiling = float(state.get("altitude_ceiling_m") or 120.0)
-
-        # Pick a safe cruise altitude: max of (current alt, 40m, ceiling-20m floor).
-        cruise_alt = min(max(float(cur.get("alt_m") or 60.0), 40.0), max(20.0, ceiling - 5.0))
-
         profile = load_drone_profile(get_engine(), state["drone_profile_id"])
-        cur_wp = Waypoint(lat=float(cur["lat"]), lon=float(cur["lon"]), alt_m=cruise_alt)
-        home_wp = Waypoint(lat=home_lat, lon=home_lon, alt_m=cruise_alt)
-        landing_wp = Waypoint(lat=home_lat, lon=home_lon, alt_m=0.0)
-
-        transit = MissionLeg(
-            leg_type=LegType.TRANSIT,
-            geometry=[cur_wp, home_wp],
-            sensor_mode=None,
-            est_duration_s=0.0,
-            est_battery_pct=0.0,
-        )
-        rtb = MissionLeg(
-            leg_type=LegType.RETURN_TO_BASE,
-            geometry=[home_wp, landing_wp],
-            sensor_mode=None,
-            est_duration_s=0.0,
-            est_battery_pct=0.0,
-        )
-        for leg in (transit, rtb):
-            energy = estimate_leg(leg, profile)
-            leg.est_duration_s = energy.duration_s
-            leg.est_battery_pct = energy.battery_pct
-
-        starting = float(cur.get("battery_pct") or 100.0)
-        plan = MissionPlan(
-            mission_id=f"replan-{uuid.uuid4().hex[:8]}",
-            area_id=state["area_id"],
-            status="READY_FOR_APPROVAL",  # the orchestrator skips approval for replans
-            legs=[transit, rtb],
-            total_duration_s=transit.est_duration_s + rtb.est_duration_s,
-            total_battery_pct=transit.est_battery_pct + rtb.est_battery_pct,
-            battery_reserve_pct=max(
-                0.0, starting - (transit.est_battery_pct + rtb.est_battery_pct)
-            ),
-            reasoning_trace=("Supervisor-generated replan: direct-to-home from current position."),
-        )
-        return {"replan_plan": plan.model_dump()}
     except Exception as e:  # noqa: BLE001
-        log.exception("supervisor replan_node failed: %s", e)
-        # Downgrade to RTB_NOW (which the orchestrator handles without a plan).
+        log.exception("replan_node: profile load failed: %s", e)
         return {
             "replan_plan": None,
             "decision": SupervisorDecision.RTB_NOW.value,
             "decision_reason": f"replan failed, falling back to RTB: {e}",
             "error": str(e),
         }
+
+    # Extract the pop-up NFZ polygon (if any) from the triggering events.
+    from shapely.geometry import shape as _shape  # noqa: PLC0415
+
+    from app.geo.patterns import METERS_PER_DEG_LAT, _route_through_flyable  # noqa: PLC0415
+
+    nfz_poly = None
+    for ed in state.get("events") or []:
+        if ed.get("type") == "NFZ_POPUP":
+            try:
+                cand = _shape((ed.get("payload") or {}).get("polygon") or {})
+                if cand.is_valid and not cand.is_empty:
+                    nfz_poly = cand
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+
+    remaining = state.get("remaining_legs") or []
+    try:
+        if nfz_poly is None or not remaining:
+            raise ValueError("no NFZ polygon or no remaining legs — using direct home")
+
+        # Buffer the NFZ by ~20m so the reroute keeps a margin.
+        import math as _m  # noqa: PLC0415
+
+        margin_deg = 20.0 * (
+            1.0 / METERS_PER_DEG_LAT
+            + 1.0 / max(METERS_PER_DEG_LAT * _m.cos(_m.radians(home_lat)), 1e-6)
+        ) / 2.0
+        nfz_buf = nfz_poly.buffer(margin_deg)
+        obstacles = [nfz_buf]
+
+        cruise_alt = min(max(float(cur.get("alt_m") or 60.0), 40.0), max(20.0, ceiling - 5.0))
+        legs: list[MissionLeg] = []
+        prev_pt = (float(cur["lon"]), float(cur["lat"]))
+
+        for leg_d in remaining:
+            ltype = leg_d.get("leg_type") or "TRANSIT"
+            sensor = leg_d.get("sensor_mode")
+            geom = leg_d.get("geometry") or []
+            if not geom:
+                continue
+            pts = [(g["lon"], g["lat"], g.get("alt_m", cruise_alt)) for g in geom]
+            # Prepend current position as the entry into this leg's first point.
+            new_wps: list[Waypoint] = []
+            cursor = prev_pt
+            for lon, lat, alt in pts:
+                detour = _route_through_flyable(cursor, (lon, lat), obstacles)
+                for dlon, dlat in detour:
+                    new_wps.append(Waypoint(lat=dlat, lon=dlon, alt_m=alt))
+                new_wps.append(Waypoint(lat=lat, lon=lon, alt_m=alt))
+                cursor = (lon, lat)
+            prev_pt = cursor
+            leg = MissionLeg(
+                leg_type=LegType(ltype),
+                geometry=new_wps,
+                sensor_mode=sensor,
+                pattern_name=leg_d.get("pattern_name"),
+                est_duration_s=0.0,
+                est_battery_pct=0.0,
+            )
+            e = estimate_leg(leg, profile)
+            leg.est_duration_s, leg.est_battery_pct = e.duration_s, e.battery_pct
+            legs.append(leg)
+
+        if not legs:
+            raise ValueError("rerouted plan empty")
+        # Guarantee the plan still ends with an RTB leg.
+        if legs[-1].leg_type != LegType.RETURN_TO_BASE:
+            home_wp = Waypoint(lat=home_lat, lon=home_lon, alt_m=cruise_alt)
+            land_wp = Waypoint(lat=home_lat, lon=home_lon, alt_m=0.0)
+            last = legs[-1].geometry[-1]
+            detour = _route_through_flyable((last.lon, last.lat), (home_lon, home_lat), obstacles)
+            rtb_geo = [Waypoint(lat=last.lat, lon=last.lon, alt_m=cruise_alt)]
+            rtb_geo += [Waypoint(lat=dl, lon=dn, alt_m=cruise_alt) for dn, dl in detour]
+            rtb_geo += [home_wp, land_wp]
+            rtb = MissionLeg(
+                leg_type=LegType.RETURN_TO_BASE, geometry=rtb_geo, sensor_mode=None,
+                est_duration_s=0.0, est_battery_pct=0.0,
+            )
+            e = estimate_leg(rtb, profile)
+            rtb.est_duration_s, rtb.est_battery_pct = e.duration_s, e.battery_pct
+            legs.append(rtb)
+
+        starting = float(cur.get("battery_pct") or 100.0)
+        total_dur = sum(leg.est_duration_s for leg in legs)
+        total_batt = sum(leg.est_battery_pct for leg in legs)
+        plan = MissionPlan(
+            mission_id=f"replan-{uuid.uuid4().hex[:8]}",
+            area_id=state["area_id"],
+            status="READY_FOR_APPROVAL",
+            legs=legs,
+            total_duration_s=total_dur,
+            total_battery_pct=total_batt,
+            battery_reserve_pct=max(0.0, starting - total_batt),
+            reasoning_trace=(
+                "Supervisor replan: remaining mission rerouted around pop-up "
+                "restricted airspace; objective preserved."
+            ),
+        )
+        return {"replan_plan": plan.model_dump()}
+    except Exception as e:  # noqa: BLE001
+        log.info("replan_node: rerouting around NFZ not possible (%s); direct-to-home", e)
+        try:
+            plan = _direct_home_plan(cur, home_lon, home_lat, ceiling, state["area_id"], profile)
+            return {"replan_plan": plan.model_dump()}
+        except Exception as e2:  # noqa: BLE001
+            log.exception("replan_node fallback failed: %s", e2)
+            return {
+                "replan_plan": None,
+                "decision": SupervisorDecision.RTB_NOW.value,
+                "decision_reason": f"replan failed, falling back to RTB: {e2}",
+                "error": str(e2),
+            }
 
 
 def commit_node(state: SupervisorState) -> dict[str, Any]:  # noqa: ARG001 — graph terminus, signature required

@@ -1,7 +1,7 @@
 """PostGIS-backed spatial store.
 
 The store owns three relations:
-- `areas`(area_id PK, boundary geometry(Polygon,4326), ceiling_m, home_lon, home_lat)
+- `areas`(area_id PK, boundary geometry(Polygon,4326), ceiling_m, home_lon, home_lat, home_bases)
 - `nfzs`(id PK, area_id FK, geom geometry(Polygon,4326))
 - `drones`(profile_id PK, profile JSONB)  -- canonical YAML loaded at seed time
 
@@ -49,6 +49,7 @@ DDL = [
         ceiling_m DOUBLE PRECISION NOT NULL,
         home_lon DOUBLE PRECISION NOT NULL,
         home_lat DOUBLE PRECISION NOT NULL,
+        home_bases JSONB NOT NULL DEFAULT '[]'::jsonb,
         -- LFU eviction columns (DD-008). protected=TRUE shields seeded areas.
         access_count INTEGER NOT NULL DEFAULT 0,
         last_accessed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -57,12 +58,13 @@ DDL = [
     )
     """,
     # Additive migrations for repos that pre-date the LFU columns.
+    "ALTER TABLE areas ADD COLUMN IF NOT EXISTS home_bases JSONB NOT NULL DEFAULT '[]'::jsonb",
     "ALTER TABLE areas ADD COLUMN IF NOT EXISTS access_count INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE areas ADD COLUMN IF NOT EXISTS last_accessed_at TIMESTAMPTZ NOT NULL DEFAULT now()",
     "ALTER TABLE areas ADD COLUMN IF NOT EXISTS protected BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE areas ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT ''",
     # Mark the two seeded areas as protected so LFU never evicts them.
-    "UPDATE areas SET protected = TRUE WHERE area_id IN ('yard-simple', 'farmland-complex')",
+    "UPDATE areas SET protected = TRUE WHERE area_id IN ('yard-simple', 'farmland-complex', 'west-city')",
     """
     CREATE TABLE IF NOT EXISTS nfzs (
         id SERIAL PRIMARY KEY,
@@ -116,6 +118,31 @@ def init_schema(engine: Engine) -> None:
 AREA_LFU_CAP = 10
 
 
+def _normalize_home_bases(
+    raw: Any, fallback_lon: float, fallback_lat: float
+) -> list[list[float]]:
+    """Return a non-empty list of [lon, lat] bases, preserving old rows."""
+    bases: list[list[float]] = []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            raw = []
+    if isinstance(raw, (list, tuple)):
+        for item in raw:
+            if not isinstance(item, (list, tuple)) or len(item) < 2:
+                continue
+            try:
+                lon = float(item[0])
+                lat = float(item[1])
+            except (TypeError, ValueError):
+                continue
+            bases.append([lon, lat])
+    if not bases:
+        bases.append([float(fallback_lon), float(fallback_lat)])
+    return bases
+
+
 def evict_lfu_area_if_needed(engine: Engine, exclude_area_id: str | None = None) -> str | None:
     """If unprotected-area count >= cap, evict the LFU one. Returns evicted id."""
     with engine.begin() as conn:
@@ -160,7 +187,7 @@ def touch_area_access(engine: Engine, area_id: str) -> None:
 
 
 def set_area_notes(engine: Engine, area_id: str, notes: str) -> None:
-    """Store the advisory note returned by the LLM-research step (DD-007)."""
+    """Store the advisory note returned by the LLM-research step (DD-015)."""
     with engine.begin() as conn:
         conn.execute(
             text("UPDATE areas SET notes = :n WHERE area_id = :a"), {"n": notes, "a": area_id}
@@ -179,27 +206,32 @@ def upsert_area(engine: Engine, area_id: str, geojson: dict[str, Any], ceiling_m
     )
     boundary_poly: Polygon = shape(boundary_feat["geometry"])
     home = boundary_feat["properties"]["home"]
+    home_bases = _normalize_home_bases(
+        boundary_feat["properties"].get("home_bases"), home[0], home[1]
+    )
     nfz_feats = [f for f in geojson["features"] if f["properties"].get("role") == "nfz"]
 
     with engine.begin() as conn:
         conn.execute(
             text(
                 """
-                INSERT INTO areas(area_id, boundary, ceiling_m, home_lon, home_lat)
-                VALUES (:aid, ST_GeomFromText(:wkt, 4326), :ceil, :hlon, :hlat)
+                INSERT INTO areas(area_id, boundary, ceiling_m, home_lon, home_lat, home_bases)
+                VALUES (:aid, ST_GeomFromText(:wkt, 4326), :ceil, :hlon, :hlat, CAST(:hb AS JSONB))
                 ON CONFLICT (area_id) DO UPDATE
                   SET boundary = EXCLUDED.boundary,
                       ceiling_m = EXCLUDED.ceiling_m,
                       home_lon = EXCLUDED.home_lon,
-                      home_lat = EXCLUDED.home_lat
+                      home_lat = EXCLUDED.home_lat,
+                      home_bases = EXCLUDED.home_bases
                 """
             ),
             {
                 "aid": area_id,
                 "wkt": boundary_poly.wkt,
                 "ceil": ceiling_m,
-                "hlon": home[0],
-                "hlat": home[1],
+                "hlon": home_bases[0][0],
+                "hlat": home_bases[0][1],
+                "hb": json.dumps(home_bases),
             },
         )
         conn.execute(text("DELETE FROM nfzs WHERE area_id = :aid"), {"aid": area_id})
@@ -247,24 +279,27 @@ def load_geo_context(engine: Engine, area_id: str) -> GeoContext:
     with engine.connect() as conn:
         row = conn.execute(
             text(
-                "SELECT ST_AsText(boundary), ceiling_m, home_lon, home_lat FROM areas WHERE area_id = :a"
+                "SELECT ST_AsText(boundary), ceiling_m, home_lon, home_lat, home_bases "
+                "FROM areas WHERE area_id = :a"
             ),
             {"a": area_id},
         ).first()
         if row is None:
             raise KeyError(f"unknown area_id: {area_id}")
-        boundary_wkt, ceiling_m, home_lon, home_lat = row
+        boundary_wkt, ceiling_m, home_lon, home_lat, home_bases_raw = row
         nfz_rows = conn.execute(
             text("SELECT ST_AsText(geom) FROM nfzs WHERE area_id = :a"), {"a": area_id}
         ).all()
     boundary = wkt.loads(boundary_wkt)
     nfzs = tuple(wkt.loads(r[0]) for r in nfz_rows)
+    home_bases = _normalize_home_bases(home_bases_raw, home_lon, home_lat)
     return GeoContext(
         area_id=area_id,
         boundary=boundary,
         nfz_polygons=nfzs,
         altitude_ceiling_m=float(ceiling_m),
-        home_point=(float(home_lon), float(home_lat)),
+        home_point=(float(home_bases[0][0]), float(home_bases[0][1])),
+        home_bases=tuple((float(lon), float(lat)) for lon, lat in home_bases),
     )
 
 
@@ -299,6 +334,8 @@ def _profile_from_dict(profile_id: str, raw: dict[str, Any]) -> DroneProfile:
         cruise_power_w=float(raw["cruise_power_w"]),
         hover_power_w=float(raw["hover_power_w"]),
         sensors=sensors,
+        # Optional (DD-015); default keeps pre-existing profiles valid.
+        max_accel_mps2=float(raw.get("max_accel_mps2", 2.5)),
     )
 
 
@@ -439,23 +476,26 @@ def list_areas(engine: Engine) -> list[dict[str, Any]]:
         rows = conn.execute(
             text(
                 "SELECT area_id, ST_AsGeoJSON(boundary), ceiling_m, home_lon, home_lat, "
+                "home_bases, "
                 "access_count, last_accessed_at, protected, notes "
                 "FROM areas ORDER BY protected DESC, access_count DESC, area_id"
             )
         ).all()
-        for area_id, bnd_json, ceiling_m, hlon, hlat, count, last_acc, prot, notes in rows:
+        for area_id, bnd_json, ceiling_m, hlon, hlat, home_bases_raw, count, last_acc, prot, notes in rows:
             nfz_rows = conn.execute(
                 text("SELECT ST_AsGeoJSON(geom) FROM nfzs WHERE area_id = :a"),
                 {"a": area_id},
             ).all()
+            home_bases = _normalize_home_bases(home_bases_raw, hlon, hlat)
             out.append(
                 {
                     "area_id": area_id,
                     "boundary": json.loads(bnd_json),
                     "nfzs": [json.loads(r[0]) for r in nfz_rows],
                     "ceiling_m": float(ceiling_m),
-                    "home_lon": float(hlon),
-                    "home_lat": float(hlat),
+                    "home_lon": float(home_bases[0][0]),
+                    "home_lat": float(home_bases[0][1]),
+                    "home_bases": home_bases,
                     "access_count": int(count or 0),
                     "last_accessed_at": last_acc.isoformat() if last_acc else None,
                     "protected": bool(prot),

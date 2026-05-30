@@ -1,4 +1,4 @@
-"""LangSmith evaluation runner for the MTS compile endpoint.
+"""LangSmith evaluation runner for Perception compile endpoint.
 
 Scores each example on:
   - final status matches expected
@@ -6,7 +6,7 @@ Scores each example on:
   - repair-loop count (efficiency)
   - faithfulness of reasoning_trace to the actual plan (LLM-as-judge)
 
-Designed to run against a live MTS service (env var MTS_BASE_URL). Wired into
+Designed to run against a live Perception service (env var MTS_BASE_URL). Wired into
 the Helm CronJob (deploy/helm/mts/templates/cronjob-evals.yaml).
 """
 

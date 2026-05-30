@@ -8,6 +8,8 @@ climb_rate_mps: 4.0
 battery_wh: 540.0
 cruise_power_w: 380.0
 hover_power_w: 520.0
+# Peak linear acceleration for the kinematic trajectory model (DD-015).
+max_accel_mps2: 3.0
 sensors:
   - name: nadir_eo
     mode: EO

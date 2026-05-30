@@ -21,8 +21,10 @@ class SupervisorDecision(StrEnum):
         leg, then end the mission.
       - DIVERT_TO_SAFE_POINT: same shape as RTB_NOW for now (home is the
         safe point); kept distinct so the UI can show different banner copy.
-      - REPLAN_FROM_HERE: invoke the compile graph with a warm-start command;
-        on success, swap the active plan and resume.
+      - REPLAN_FROM_HERE: reroute the REMAINING legs around an obstacle (e.g. a
+        pop-up NFZ) so the mission continues; swap the active plan and resume.
+      - LOITER_RTB: hold position briefly (loiter), then fly home — the
+        standard lost-link / lost-C2 contingency.
       - EMERGENCY_LAND: replace the remainder with a descend-in-place LOITER
         at low altitude, then end the mission.
     """
@@ -31,6 +33,7 @@ class SupervisorDecision(StrEnum):
     RTB_NOW = "RTB_NOW"
     DIVERT_TO_SAFE_POINT = "DIVERT_TO_SAFE_POINT"
     REPLAN_FROM_HERE = "REPLAN_FROM_HERE"
+    LOITER_RTB = "LOITER_RTB"
     EMERGENCY_LAND = "EMERGENCY_LAND"
 
 

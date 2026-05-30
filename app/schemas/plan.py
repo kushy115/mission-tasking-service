@@ -83,6 +83,18 @@ class OptimizationSuggestion(BaseModel):
         "tactical",
         description="One of: weather | resource | coverage | coordination | tactical.",
     )
+    apply_command: str = Field(
+        "",
+        description=(
+            "A complete, self-contained natural-language command the operator can "
+            "send back to the planner to APPLY this suggestion. Must restate the "
+            "full mission intent (the planner does NOT see the prior plan) with this "
+            "one tweak folded in. E.g. if the suggestion is 'sweep cross-wind', the "
+            "apply_command is the original mission rephrased to specify the "
+            "cross-wind sweep orientation. The UI turns this into a one-click "
+            "'Apply & retry' button."
+        ),
+    )
 
 
 class OptimizationAdvisory(BaseModel):
@@ -119,9 +131,6 @@ class MissionPlan(BaseModel):
     reasoning_trace: str = ""
     clarification_questions: list[str] = Field(default_factory=list)
     rejection_reasons: list[str] = Field(default_factory=list)
-    # Advisory critique (LLM, see DESIGN_DECISIONS.md §6). None = not run.
-    confidence_score: float | None = None
-    critique_notes: str = ""
     # Optimization advisor: LangChain structured-output pass that proposes
     # tactical tweaks (weather-aware re-orientations, multi-drone splits,
     # resource-constrained scope reductions). Advisory only — never blocks.

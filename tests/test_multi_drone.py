@@ -8,6 +8,7 @@ from app.graph.multi_drone import (
     MIN_VERTICAL_SEP_M,
     TAKEOFF_STAGGER_S,
     assign_slots,
+    nearest_home_base,
 )
 
 
@@ -61,3 +62,8 @@ def test_slot_band_half_band():
     slots = assign_slots(["a"])
     s = slots[0]
     assert (s.alt_max - s.alt_min) / 2 == LAYER_HALF_BAND
+
+
+def test_nearest_home_base_selects_closest_lonlat():
+    bases = [(-74.195, 40.711), (-74.185, 40.710), (-74.175, 40.727)]
+    assert nearest_home_base(bases, (-74.176, 40.726)) == (-74.175, 40.727)

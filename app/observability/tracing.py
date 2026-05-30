@@ -9,14 +9,10 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import TYPE_CHECKING
 
-from fastapi import FastAPI
-from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +23,13 @@ def configure_tracing(app: FastAPI) -> None:
     if not endpoint:
         log.info("OTEL endpoint not set; tracing disabled.")
         return
+    from opentelemetry import trace
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
     provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
     exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)
     provider.add_span_processor(BatchSpanProcessor(exporter))

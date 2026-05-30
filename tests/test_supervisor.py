@@ -47,10 +47,9 @@ def test_no_events_returns_continue():
     assert decision == SupervisorDecision.CONTINUE
 
 
-def test_manual_rtb_wins_over_other_events():
+def test_lost_link_triggers_loiter_rtb():
     events = [
-        Event(type=EventType.GPS_DROPOUT),
-        Event(type=EventType.MANUAL_RTB, note="operator pressed RTB"),
+        Event(type=EventType.LOST_LINK, note="link dropped"),
     ]
     decision, reason = decide(
         current=_telemetry(),
@@ -60,13 +59,13 @@ def test_manual_rtb_wins_over_other_events():
         pending_events=events,
         drone_profile=PROFILE,
     )
-    assert decision == SupervisorDecision.RTB_NOW
-    assert "RTB" in reason or "rtb" in reason.lower() or "operator" in reason.lower()
+    assert decision == SupervisorDecision.LOITER_RTB
+    assert "link" in reason.lower() or "hold" in reason.lower() or "return" in reason.lower()
 
 
-def test_manual_land_wins_over_manual_rtb():
+def test_manual_land_wins_over_lost_link():
     events = [
-        Event(type=EventType.MANUAL_RTB),
+        Event(type=EventType.LOST_LINK),
         Event(type=EventType.MANUAL_LAND),
     ]
     decision, _ = decide(
@@ -194,50 +193,6 @@ def test_nfz_popup_not_intersecting_remains_continue():
     assert decision == SupervisorDecision.CONTINUE
 
 
-def test_sensor_fault_on_required_sensor_triggers_replan():
-    remaining = [
-        {
-            "leg_type": "SEARCH_PATTERN",
-            "geometry": [{"lat": 41.25, "lon": -95.49, "alt_m": 60.0}],
-            "sensor_mode": "EO",
-            "est_duration_s": 600.0,
-            "est_battery_pct": 25.0,
-        }
-    ]
-    events = [Event(type=EventType.SENSOR_FAULT, payload={"mode": "EO"})]
-    decision, _ = decide(
-        current=_telemetry(),
-        remaining_legs=remaining,
-        home_lon=HOME_LON,
-        home_lat=HOME_LAT,
-        pending_events=events,
-        drone_profile=PROFILE,
-    )
-    assert decision == SupervisorDecision.REPLAN_FROM_HERE
-
-
-def test_sensor_fault_on_unused_sensor_remains_continue():
-    remaining = [
-        {
-            "leg_type": "TRANSIT",
-            "geometry": [{"lat": 41.25, "lon": -95.49, "alt_m": 60.0}],
-            "sensor_mode": None,
-            "est_duration_s": 60.0,
-            "est_battery_pct": 2.0,
-        }
-    ]
-    events = [Event(type=EventType.SENSOR_FAULT, payload={"mode": "IR"})]
-    decision, _ = decide(
-        current=_telemetry(),
-        remaining_legs=remaining,
-        home_lon=HOME_LON,
-        home_lat=HOME_LAT,
-        pending_events=events,
-        drone_profile=PROFILE,
-    )
-    assert decision == SupervisorDecision.CONTINUE
-
-
 def test_low_battery_background_check_triggers_rtb_without_events():
     # No events at all, but battery is low enough that even the RTB-cost
     # projection puts us below the supervisor's reserve margin.
@@ -251,20 +206,6 @@ def test_low_battery_background_check_triggers_rtb_without_events():
     )
     assert decision == SupervisorDecision.RTB_NOW
     assert "projected" in reason or "margin" in reason
-
-
-def test_gps_dropout_is_advisory_continue():
-    events = [Event(type=EventType.GPS_DROPOUT)]
-    decision, reason = decide(
-        current=_telemetry(),
-        remaining_legs=[],
-        home_lon=HOME_LON,
-        home_lat=HOME_LAT,
-        pending_events=events,
-        drone_profile=PROFILE,
-    )
-    assert decision == SupervisorDecision.CONTINUE
-    assert "GPS" in reason or "nav" in reason.lower()
 
 
 def test_event_from_dict_rejects_unknown_type():

@@ -19,17 +19,24 @@ from typing import Any
 class EventType(StrEnum):
     """The events a live mission can experience.
 
-    Keep this list small — every type needs a deterministic policy branch in
-    `app/supervisor/policy.py`. Add new types behind a feature flag if they
-    are experimental.
+    Deliberately a SHORT list of realistic, distinct contingencies — each maps
+    to a *different* visible drone response (not all "return home"). Every type
+    needs a deterministic policy branch in `app/supervisor/policy.py`.
+
+    - NFZ_POPUP   → detour around the new airspace and CONTINUE the mission.
+    - WIND_SPIKE  → gust exceeds the airframe's wind limit → RETURN TO BASE.
+    - LOST_LINK   → C2/GPS link lost → HOLD (loiter) then auto-RTB (standard
+                    lost-link procedure).
+    - MANUAL_LAND → operator emergency land in place.
+
+    Unrealistic / low-value events (e.g. sudden battery cell failure) are
+    intentionally excluded — the always-on battery-margin check in the policy
+    already covers genuine energy shortfalls.
     """
 
-    WIND_SPIKE = "WIND_SPIKE"  # sustained wind step-up in m/s
-    NFZ_POPUP = "NFZ_POPUP"  # new no-fly polygon appears mid-flight
-    BATTERY_FAULT = "BATTERY_FAULT"  # drain rate increases unexpectedly
-    SENSOR_FAULT = "SENSOR_FAULT"  # named sensor goes offline (EO/IR)
-    GPS_DROPOUT = "GPS_DROPOUT"  # advisory; nav degraded
-    MANUAL_RTB = "MANUAL_RTB"  # operator-triggered return-to-base
+    NFZ_POPUP = "NFZ_POPUP"  # new restricted airspace (TFR) appears mid-flight
+    WIND_SPIKE = "WIND_SPIKE"  # gust step-up in m/s beyond the airframe limit
+    LOST_LINK = "LOST_LINK"  # C2/GPS link lost → hold then RTB
     MANUAL_LAND = "MANUAL_LAND"  # operator-triggered emergency land
 
 
